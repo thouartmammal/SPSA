@@ -1,7 +1,7 @@
 import time
 import logging
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union, Literal
 
 from fastapi import APIRouter, HTTPException, status, Depends, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
@@ -12,41 +12,104 @@ logger = logging.getLogger(__name__)
 # Create router
 router = APIRouter()
 
-# Pydantic models for API
-class ActivityData(BaseModel):
-    """Single CRM activity data"""
-    activity_type: str = Field(..., description="Type of activity (email, call, meeting, note, task)")
-    timestamp: Optional[str] = None
-    content: Optional[str] = None
-    direction: Optional[str] = None
+# Base Activity Model
+class BaseActivity(BaseModel):
+    """Base activity model with common fields"""
+    activity_type: str = Field(..., description="Type of activity")
+    
+    class Config:
+        extra = "allow"  # Allow extra fields for flexibility
+
+# Specific Activity Models based on your data structure
+class EmailActivity(BaseActivity):
+    """Email activity data"""
+    activity_type: Literal["email"] = "email"
+    sent_at: Optional[str] = None
+    from_email: Optional[str] = Field(None, alias="from")
+    to: Optional[List[str]] = None
     subject: Optional[str] = None
     body: Optional[str] = None
-    sent_at: Optional[str] = None
+    direction: Optional[str] = None
+
+class CallActivity(BaseActivity):
+    """Call activity data"""
+    activity_type: Literal["call"] = "call"
+    id: Optional[str] = None
     createdate: Optional[str] = None
     call_title: Optional[str] = None
     call_body: Optional[str] = None
+    call_direction: Optional[str] = None
     call_duration: Optional[int] = None
-    meeting_title: Optional[str] = None
-    meeting_start_time: Optional[str] = None
+    call_status: Optional[str] = None
+
+class MeetingActivity(BaseActivity):
+    """Meeting activity data"""
+    activity_type: Literal["meeting"] = "meeting"
+    id: Optional[str] = None
     internal_meeting_notes: Optional[str] = None
-    note_body: Optional[str] = None
+    meeting_title: Optional[str] = None
+    meeting_location: Optional[str] = None
+    meeting_location_type: Optional[str] = None
+    meeting_outcome: Optional[str] = None
+    meeting_start_time: Optional[str] = None
+    meeting_end_time: Optional[str] = None
+
+class NoteActivity(BaseActivity):
+    """Note activity data"""
+    activity_type: Literal["note"] = "note"
+    id: Optional[str] = None
+    createdate: Optional[str] = None
     lastmodifieddate: Optional[str] = None
+    note_body: Optional[str] = None
+
+class TaskActivity(BaseActivity):
+    """Task activity data"""
+    activity_type: Literal["task"] = "task"
+    id: Optional[str] = None
+    createdate: Optional[str] = None
+    task_priority: Optional[str] = None
+    task_status: Optional[str] = None
+    task_type: Optional[str] = None
     task_subject: Optional[str] = None
     task_body: Optional[str] = None
-    task_status: Optional[str] = None
-    task_priority: Optional[str] = None
-    to: Optional[List[str]] = None
+
+# Union type for activities
+ActivityData = Union[EmailActivity, CallActivity, MeetingActivity, NoteActivity, TaskActivity]
 
 class DealData(BaseModel):
     """Deal data for analysis"""
     deal_id: str = Field(..., description="Unique deal identifier")
-    activities: List[ActivityData] = Field(..., description="List of deal activities")
-    amount: Optional[float] = Field(None, description="Deal amount")
+    activities: List[Dict[str, Any]] = Field(..., description="List of deal activities")
+    amount: Optional[Union[str, float]] = Field(None, description="Deal amount")
     dealstage: Optional[str] = Field(None, description="Current deal stage")
     dealtype: Optional[str] = Field(None, description="Type of deal")
-    deal_stage_probability: Optional[float] = Field(None, description="Deal probability percentage")
+    deal_stage_probability: Optional[Union[str, float]] = Field(None, description="Deal probability percentage")
     createdate: Optional[str] = Field(None, description="Deal creation date")
     closedate: Optional[str] = Field(None, description="Deal close date")
+    
+    @validator('amount', pre=True)
+    def parse_amount(cls, v):
+        """Convert amount to float if it's a string"""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            try:
+                return float(v)
+            except ValueError:
+                return 0.0
+        return float(v)
+    
+    @validator('deal_stage_probability', pre=True)
+    def parse_probability(cls, v):
+        """Convert probability to float if it's a string"""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            try:
+                return float(v)
+            except ValueError:
+                return 0.0
+        return float(v)
 
 class AnalysisRequest(BaseModel):
     """Request for sentiment analysis"""
@@ -76,15 +139,37 @@ class KnowledgeBaseBuildRequest(BaseModel):
     batch_size: int = Field(50, description="Batch processing size")
 
 # Response models
+class ActivityBreakdownItem(BaseModel):
+    """Individual activity breakdown"""
+    sentiment: str
+    sentiment_score: float
+    key_indicators: List[str]
+    count: int
+    performance_rating: str
+
+class DealMomentumIndicators(BaseModel):
+    """Deal momentum indicators"""
+    stage_progression: str
+    client_engagement_trend: str
+    competitive_position: str
+    activity_velocity: str
+
+class PerformanceAnalysis(BaseModel):
+    """Performance analysis metrics"""
+    response_time_rating: str
+    communication_consistency: str
+    proactive_behavior: str
+    client_relationship_quality: str
+
 class SentimentAnalysisResponse(BaseModel):
     """Sentiment analysis response"""
     deal_id: str
     overall_sentiment: str
     sentiment_score: float = Field(..., ge=-1.0, le=1.0)
     confidence: float = Field(..., ge=0.0, le=1.0)
-    activity_breakdown: Dict[str, Any]
-    deal_momentum_indicators: Dict[str, Any]
-    performance_analysis: Dict[str, Any]
+    activity_breakdown: Dict[str, ActivityBreakdownItem]
+    deal_momentum_indicators: DealMomentumIndicators
+    performance_analysis: PerformanceAnalysis
     reasoning: str
     professional_gaps: List[str]
     excellence_indicators: List[str]
@@ -208,7 +293,7 @@ async def analyze_sentiment(
         # Convert request to dict format expected by analyzer
         deal_data_dict = {
             "deal_id": request.deal_data.deal_id,
-            "activities": [activity.dict() for activity in request.deal_data.activities],
+            "activities": request.deal_data.activities,  # Keep as original dicts
             **request.deal_data.dict(exclude={"deal_id", "activities"})
         }
         
@@ -226,9 +311,55 @@ async def analyze_sentiment(
         result["analysis_metadata"]["request_id"] = request_id
         result["analysis_metadata"]["analysis_type"] = request.analysis_type
         
-        logger.info(f"[{request_id}] Sentiment analysis completed in {processing_time:.2f}s")
+        # Convert activity_breakdown to proper format
+        activity_breakdown = {}
+        for activity_type, breakdown in result.get("activity_breakdown", {}).items():
+            activity_breakdown[activity_type] = ActivityBreakdownItem(
+                sentiment=breakdown.get("sentiment", "neutral"),
+                sentiment_score=breakdown.get("sentiment_score", 0.0),
+                key_indicators=breakdown.get("key_indicators", []),
+                count=breakdown.get("count", 0),
+                performance_rating=breakdown.get("performance_rating", "fair")
+            )
         
-        return SentimentAnalysisResponse(**result)
+        # Convert other nested objects
+        deal_momentum = DealMomentumIndicators(
+            stage_progression=result.get("deal_momentum_indicators", {}).get("stage_progression", "unknown"),
+            client_engagement_trend=result.get("deal_momentum_indicators", {}).get("client_engagement_trend", "unknown"),
+            competitive_position=result.get("deal_momentum_indicators", {}).get("competitive_position", "unknown"),
+            activity_velocity=result.get("deal_momentum_indicators", {}).get("activity_velocity", "unknown")
+        )
+        
+        performance_analysis = PerformanceAnalysis(
+            response_time_rating=result.get("performance_analysis", {}).get("response_time_rating", "fair"),
+            communication_consistency=result.get("performance_analysis", {}).get("communication_consistency", "fair"),
+            proactive_behavior=result.get("performance_analysis", {}).get("proactive_behavior", "medium"),
+            client_relationship_quality=result.get("performance_analysis", {}).get("client_relationship_quality", "moderate")
+        )
+        
+        # Create response
+        response = SentimentAnalysisResponse(
+            deal_id=result["deal_context"]["deal_id"],
+            overall_sentiment=result["overall_sentiment"],
+            sentiment_score=result["sentiment_score"],
+            confidence=result["confidence"],
+            activity_breakdown=activity_breakdown,
+            deal_momentum_indicators=deal_momentum,
+            performance_analysis=performance_analysis,
+            reasoning=result["reasoning"],
+            professional_gaps=result.get("professional_gaps", []),
+            excellence_indicators=result.get("excellence_indicators", []),
+            risk_indicators=result.get("risk_indicators", []),
+            opportunity_indicators=result.get("opportunity_indicators", []),
+            temporal_trend=result.get("temporal_trend", "stable"),
+            recommended_actions=result.get("recommended_actions", []),
+            context_analysis_notes=result.get("context_analysis_notes", []),
+            benchmark_comparison=result.get("benchmark_comparison", "insufficient_data"),
+            analysis_metadata=result["analysis_metadata"]
+        )
+        
+        logger.info(f"[{request_id}] Sentiment analysis completed in {processing_time:.2f}s")
+        return response
         
     except Exception as e:
         logger.error(f"[{request_id}] Sentiment analysis failed: {str(e)}")
@@ -263,7 +394,7 @@ async def analyze_batch(
         for deal in request.deals:
             deal_dict = {
                 "deal_id": deal.deal_id,
-                "activities": [activity.dict() for activity in deal.activities],
+                "activities": deal.activities,  # Keep as original dicts
                 **deal.dict(exclude={"deal_id", "activities"})
             }
             deals_data.append(deal_dict)
@@ -292,13 +423,68 @@ async def analyze_batch(
                 })
                 failed_count += 1
             else:
-                batch_results.append({
-                    "deal_id": result["deal_context"]["deal_id"],
-                    "success": True,
-                    "result": SentimentAnalysisResponse(**result),
-                    "error": None
-                })
-                successful_count += 1
+                try:
+                    # Create proper response object
+                    activity_breakdown = {}
+                    for activity_type, breakdown in result.get("activity_breakdown", {}).items():
+                        activity_breakdown[activity_type] = ActivityBreakdownItem(
+                            sentiment=breakdown.get("sentiment", "neutral"),
+                            sentiment_score=breakdown.get("sentiment_score", 0.0),
+                            key_indicators=breakdown.get("key_indicators", []),
+                            count=breakdown.get("count", 0),
+                            performance_rating=breakdown.get("performance_rating", "fair")
+                        )
+                    
+                    deal_momentum = DealMomentumIndicators(
+                        stage_progression=result.get("deal_momentum_indicators", {}).get("stage_progression", "unknown"),
+                        client_engagement_trend=result.get("deal_momentum_indicators", {}).get("client_engagement_trend", "unknown"),
+                        competitive_position=result.get("deal_momentum_indicators", {}).get("competitive_position", "unknown"),
+                        activity_velocity=result.get("deal_momentum_indicators", {}).get("activity_velocity", "unknown")
+                    )
+                    
+                    performance_analysis = PerformanceAnalysis(
+                        response_time_rating=result.get("performance_analysis", {}).get("response_time_rating", "fair"),
+                        communication_consistency=result.get("performance_analysis", {}).get("communication_consistency", "fair"),
+                        proactive_behavior=result.get("performance_analysis", {}).get("proactive_behavior", "medium"),
+                        client_relationship_quality=result.get("performance_analysis", {}).get("client_relationship_quality", "moderate")
+                    )
+                    
+                    response_obj = SentimentAnalysisResponse(
+                        deal_id=result["deal_context"]["deal_id"],
+                        overall_sentiment=result["overall_sentiment"],
+                        sentiment_score=result["sentiment_score"],
+                        confidence=result["confidence"],
+                        activity_breakdown=activity_breakdown,
+                        deal_momentum_indicators=deal_momentum,
+                        performance_analysis=performance_analysis,
+                        reasoning=result["reasoning"],
+                        professional_gaps=result.get("professional_gaps", []),
+                        excellence_indicators=result.get("excellence_indicators", []),
+                        risk_indicators=result.get("risk_indicators", []),
+                        opportunity_indicators=result.get("opportunity_indicators", []),
+                        temporal_trend=result.get("temporal_trend", "stable"),
+                        recommended_actions=result.get("recommended_actions", []),
+                        context_analysis_notes=result.get("context_analysis_notes", []),
+                        benchmark_comparison=result.get("benchmark_comparison", "insufficient_data"),
+                        analysis_metadata=result.get("analysis_metadata", {})
+                    )
+                    
+                    batch_results.append({
+                        "deal_id": result["deal_context"]["deal_id"],
+                        "success": True,
+                        "result": response_obj,
+                        "error": None
+                    })
+                    successful_count += 1
+                except Exception as e:
+                    logger.error(f"Error processing result for deal: {e}")
+                    batch_results.append({
+                        "deal_id": result.get("deal_context", {}).get("deal_id", "unknown"),
+                        "success": False,
+                        "result": None,
+                        "error": f"Result processing error: {str(e)}"
+                    })
+                    failed_count += 1
         
         logger.info(f"[{request_id}] Batch analysis completed: {successful_count} successful, {failed_count} failed")
         
