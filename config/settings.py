@@ -9,6 +9,10 @@ load_dotenv()
 
 class Settings:
     """Configuration settings"""
+
+    MAX_RETRIEVED_DOCS: int = 5 
+    SIMILARITY_THRESHOLD: float = 0.3
+    CONTEXT_WINDOW_SIZE: int = 4000
     
     # Embedding Service
     EMBEDDING_SERVICE: str = os.getenv("EMBEDDING_SERVICE", "sentence_transformers")

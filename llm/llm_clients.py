@@ -1,9 +1,3 @@
-# llm/llm_client.py
-"""
-Multi-Provider LLM Client for Salesperson Sentiment Analysis
-Supports Groq, OpenAI, Anthropic, and Azure providers
-"""
-
 import json
 import logging
 import os
@@ -251,7 +245,7 @@ class LLMClient:
     def __init__(
         self, 
         provider: LLMProvider,
-        prompt_file_path: str = "prompts/sentiment_analysis_prompt.txt",
+        prompt_file_path: str = "prompts\prompt_version_3.txt",
         max_retries: int = 3,
         retry_delay: float = 1.0
     ):
