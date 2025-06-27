@@ -24,7 +24,7 @@ class Settings:
     PINECONE_ENVIRONMENT: Optional[str] = os.getenv("PINECONE_ENVIRONMENT")
     
     # Data Paths
-    DATA_PATH: str = os.getenv("DATA_PATH", "data/sample_deals.json")
+    DATA_PATH: str = os.getenv("DATA_PATH", "data/final_deal_details.json")
     PROCESSED_DATA_PATH: str = os.getenv("PROCESSED_DATA_PATH", "data/processed/")
     VECTOR_DB_PATH: str = os.getenv("VECTOR_DB_PATH", "data/vector_db/")
     

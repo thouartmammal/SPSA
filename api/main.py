@@ -12,6 +12,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
+import os
+
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -79,7 +81,7 @@ async def initialize_services():
         
         # Initialize sentiment analyzer
         from llm.sentiment_analyzer import create_sentiment_analyzer
-        service_registry['sentiment_analyzer'] = create_sentiment_analyzer()
+        service_registry['sentiment_analyzer'] = create_sentiment_analyzer(provider_name=os.getenv('LLM_PROVIDER'), provider_config={'api_key': os.getenv('GROQ_API_KEY'), 'model': os.getenv('GROQ_MODEL')})
         logger.info("Sentiment analyzer initialized")
         
         # Initialize RAG retriever

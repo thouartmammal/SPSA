@@ -1,0 +1,109 @@
+[
+    {
+        "deal_id": "12691023255",
+        "activities": [
+            {
+                "sent_at": "2023-05-22T14:07:15.247Z",
+                "from": null,
+                "to": [],
+                "subject": null,
+                "body": "Hi Naria,\n\u00a0\nJust putting this email at the top of your inbox to see if we\u2019d be able to set up a time to meet! Anytime after May 30th would be great for us!\n\u00a0\nThanks for your time and we hope you have a great start to the week.",
+                "state": "email",
+                "direction": "outgoing",
+                "activity_type": "email"
+            },
+            {
+                "id": "34955940502",
+                "createdate": "2023-05-18T15:52:56.590Z",
+                "call_title": "Call with Naria Frazer",
+                "call_body": "Left a voicemail to gage interest for Praytell with LCW",
+                "call_direction": "OUTBOUND",
+                "call_duration": null,
+                "call_status": "QUEUED",
+                "activity_type": "call"
+            },
+            {
+                "id": "37884676364",
+                "internal_meeting_notes": null,
+                "meeting_title": "USOPC & LCW Exploratory Call",
+                "meeting_location": "Microsoft Teams",
+                "meeting_location_type": null,
+                "meeting_outcome": "SCHEDULED",
+                "meeting_start_time": "2023-08-01T18:15:00Z",
+                "meeting_end_time": "2023-08-01T18:45:00Z",
+                "activity_type": "meeting"
+            }
+        ],
+        "amount": "12000",
+        "closedate": "2023-05-22T14:19:33.980Z",
+        "createdate": "2022-12-20T06:00:00Z",
+        "dealstage": "Closed lost",
+        "deal_stage_probability": "0.0",
+        "dealtype": "newbusiness"
+    },
+    {
+        "deal_id": "12691023254",
+        "activities": [
+            {
+                "id": "40896217486",
+                "createdate": "2023-10-06T19:53:46.567Z",
+                "lastmodifieddate": "2025-06-04T17:25:47.384Z",
+                "note_body": "10/6/23 email thread with SarahFrom: Rebecca Parrilla Sent: Friday, October 6, 2023 3:53 PMTo: Sarah Nodarse <s.nodarse@lcwmail.com>Cc: Pedro Seminario <P.seminario@lcwmail.com>Subject: RE: LCW & Wunderman Thompson Follow UpThanks. The only WT deal I see on HubSpot is within the \u201cPassed to Consultant\u201d stage, it\u2019s for $11,790 and it\u2019s for and IDI project. Is this the one that we should move to Closed/Lost? Thank you. Hugs. Rebecca M. Parrilla(she/her)Head of Business DevelopmentLCW From: Sarah Nodarse <s.nodarse@lcwmail.com> Sent: Friday, October 6, 2023 1:44 PMTo: Rebecca Parrilla <r.parrilla@lcwmail.com>Subject: FW: LCW & Wunderman Thompson Follow UpFYI \u2013 I am marking the opportunity I have in Compass with them as \u201cClosed- lost,\u201d but just reached out to reestablish contact nonetheless. \ud83d\ude0aFrom: Sarah Nodarse Sent: Friday, October 6, 2023 12:43 PMTo: La'Zette LaFontant <lazette.lafontant@wundermanthompson.com>Subject: RE: LCW & Wunderman Thompson Follow UpHi La\u2019Zette,I hope you are well since we were last in contact. Indeed, it has been some time! I wanted to reach out and check in \u2013 first to let you know that both Melissa and Hannah have left LCW. Should you have any questions or needs, you can feel free to reach out to me directly.I\u2019d love to catch up sometime soon and hear how things are going for you.In the meantime, have a great weekend!Best,Sarah",
+                "activity_type": "note"
+            },
+            {
+                "id": "36628032673",
+                "createdate": "2023-06-27T15:34:59.016Z",
+                "task_priority": "NONE",
+                "task_status": "NOT_STARTED",
+                "task_type": "TODO",
+                "task_subject": "Task for Wunderman Thompson",
+                "task_body": null,
+                "activity_type": "task"
+            },
+            {
+                "id": "33415941536",
+                "internal_meeting_notes": null,
+                "meeting_title": "LCW | USOPC",
+                "meeting_location": "https://usopc-org.zoom.us/j/91735803613?pwd=R0N5YXRPK3lxcXgvV2xiM05UVWFYZz09&from=addon",
+                "meeting_location_type": null,
+                "meeting_outcome": null,
+                "meeting_start_time": "2023-04-13T19:00:00Z",
+                "meeting_end_time": "2023-04-13T20:00:00Z",
+                "activity_type": "meeting"
+            }
+        ],
+        "amount": "11790",
+        "closedate": "2023-10-10T15:15:38.370Z",
+        "createdate": "2022-03-16T05:00:00Z",
+        "dealstage": "Closed lost",
+        "deal_stage_probability": "0.0",
+        "dealtype": "newbusiness"
+    },
+    {
+        "deal_id": "12690973853",
+        "activities": [
+            {
+                "sent_at": "2023-10-20T10:09:00.000Z",
+                "from": "a.kolodizner@lcwmail.com",
+                "to": [
+                    "a.kolodizner@lcwmail.com",
+                    "Shane.Lloyd@bakertilly.com",
+                    "P.seminario@lcwmail.com",
+                    "r.parrilla@lcwmail.com"
+                ],
+                "subject": "Re: LCW Cultural Immersions for Baker Tilly",
+                "body": "CAUTION: This email originated from outside of the organization. Do not click links or open attachments unless you recognize the sender",
+                "state": "thread",
+                "direction": "outgoing",
+                "activity_type": "email"
+            }
+        ],
+        "amount": "58500",
+        "closedate": "2023-05-31T20:02:33.130Z",
+        "createdate": "2022-11-09T06:00:00Z",
+        "dealstage": "Closed lost",
+        "deal_stage_probability": "0.0",
+        "dealtype": "newbusiness"
+    }
+]

@@ -685,7 +685,7 @@ def test_sentiment_analyzer():
         analyzer = create_sentiment_analyzer(
             provider_name="groq",
             provider_config={
-                'api_key': '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',  # Replace with actual key
+                'api_key': '',  # Replace with actual key
                 'model': 'llama-3.3-70b-versatile'
             }
         )
