@@ -10,7 +10,7 @@ from core.data_processor import DealDataProcessor
 from core.embedding_service import get_embedding_service
 from core.vector_store import get_vector_store
 from config.settings import settings
-from utils.logging import setup_logging
+from utils.logging_config import setup_logging
 
 def main():
     """Build knowledge base from deal data"""

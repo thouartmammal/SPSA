@@ -40,6 +40,11 @@ class Settings:
     CHROMADB_COLLECTION_NAME: str = "sales_deal_patterns"
     PINECONE_INDEX_NAME: str = "sales-sentiment-analysis"
     VECTOR_DIMENSION: int = 384  # for all-MiniLM-L6-v2
+
+    REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
+    CACHE_TTL: int = int(os.getenv("CACHE_TTL", "3600"))
+    LLM_CACHE_TTL: int = int(os.getenv("LLM_CACHE_TTL", "1800"))
+    VECTOR_SEARCH_CACHE_TTL: int = int(os.getenv("VECTOR_SEARCH_CACHE_TTL", "3600"))
     
     def __init__(self):
         # Create directories if they don't exist

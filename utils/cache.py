@@ -9,6 +9,13 @@ from redis.exceptions import ConnectionError, TimeoutError
 import threading
 import time
 
+import sys
+from pathlib import Path
+
+# Add project root to Python path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -44,6 +51,7 @@ class CacheManager:
         # Connection pool for better performance
         self.connection_pool = None
         self.redis_client = None
+
         
         # Cache statistics
         self.stats = {
