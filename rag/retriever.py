@@ -329,41 +329,108 @@ class RAGRetriever:
         results: List[VectorSearchResult],
         filters: Dict[str, Any]
     ) -> List[VectorSearchResult]:
-        """Apply additional filters to search results"""
+        """Apply business criteria and additional filters to search results"""
         
         filtered_results = []
+        
+        # Get current deal context for business criteria filtering
+        current_deal = filters.get('current_deal', {})
         
         for result in results:
             include = True
             
-            for filter_key, filter_value in filters.items():
-                if filter_key == 'deal_outcome':
-                    if result.metadata.get('deal_outcome') != filter_value:
-                        include = False
-                        break
+            # Apply business criteria filtering first
+            if current_deal:
+                include = self._meets_business_criteria(result, current_deal)
+            
+            # Apply additional filters if business criteria passed
+            if include:
+                for filter_key, filter_value in filters.items():
+                    if filter_key == 'current_deal':
+                        continue  # Already handled above
                         
-                elif filter_key == 'deal_size_category':
-                    if result.metadata.get('deal_size_category') != filter_value:
-                        include = False
-                        break
-                        
-                elif filter_key == 'deal_type':
-                    if result.metadata.get('deal_type') != filter_value:
-                        include = False
-                        break
-                        
-                elif filter_key == 'deal_amount_range':
-                    result_amount = result.metadata.get('deal_amount', 0)
-                    if isinstance(filter_value, tuple):
-                        min_amount, max_amount = filter_value
-                        if not (min_amount <= result_amount <= max_amount):
+                    elif filter_key == 'deal_outcome':
+                        if result.metadata.get('deal_outcome') != filter_value:
                             include = False
                             break
+                            
+                    elif filter_key == 'deal_size_category':
+                        if result.metadata.get('deal_size_category') != filter_value:
+                            include = False
+                            break
+                            
+                    elif filter_key == 'deal_type':
+                        if result.metadata.get('deal_type') != filter_value:
+                            include = False
+                            break
+                            
+                    elif filter_key == 'deal_amount_range':
+                        result_amount = result.metadata.get('deal_amount', 0)
+                        if isinstance(filter_value, tuple):
+                            min_amount, max_amount = filter_value
+                            if not (min_amount <= result_amount <= max_amount):
+                                include = False
+                                break
             
             if include:
                 filtered_results.append(result)
         
         return filtered_results
+
+    def _meets_business_criteria(
+        self,
+        result: VectorSearchResult,
+        current_deal: Dict[str, Any]
+    ) -> bool:
+        """Check if result meets business criteria for similarity"""
+        
+        # Extract current deal values
+        current_amount = current_deal.get('amount') or current_deal.get('deal_amount', 0)
+        current_deal_type = current_deal.get('dealtype') or current_deal.get('deal_type', '')
+        current_probability = current_deal.get('deal_stage_probability') or current_deal.get('probability', 0)
+        
+        # Extract result values
+        result_amount = result.metadata.get('deal_amount') or result.metadata.get('amount', 0)
+        result_deal_type = result.metadata.get('deal_type') or result.metadata.get('dealtype', '')
+        result_probability = result.metadata.get('deal_stage_probability') or result.metadata.get('probability', 0)
+        
+        # Convert to proper types
+        try:
+            current_amount = float(current_amount) if current_amount else 0
+            result_amount = float(result_amount) if result_amount else 0
+            current_probability = float(current_probability) if current_probability else 0
+            result_probability = float(result_probability) if result_probability else 0
+        except (ValueError, TypeError):
+            return False
+        
+        # Check deal type (must match exactly)
+        if not current_deal_type or not result_deal_type:
+            return False
+        if current_deal_type.lower().strip() != result_deal_type.lower().strip():
+            return False
+        
+        # Check amount (within 30% tolerance)
+        if current_amount <= 0 or result_amount <= 0:
+            return False
+        amount_diff = abs(current_amount - result_amount) / current_amount
+        if amount_diff > 0.3:  # 30% tolerance
+            return False
+        
+        # Check probability (within ±0.2 tolerance)
+        if current_probability < 0 or result_probability < 0:
+            return False
+        
+        # Convert percentages to 0-1 scale if needed
+        if current_probability > 1:
+            current_probability = current_probability / 100.0
+        if result_probability > 1:
+            result_probability = result_probability / 100.0
+            
+        probability_diff = abs(current_probability - result_probability)
+        if probability_diff > 0.2:  # ±0.2 tolerance
+            return False
+        
+        return True
     
     def _analyze_patterns(
         self,

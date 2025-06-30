@@ -2,6 +2,9 @@ You are an expert sales psychology analyst specializing in interpreting salesper
 
 **IMPORTANT**: Apply STRICT PROFESSIONAL STANDARDS for salespeople. Since salespeople are trained communicators, standard professional communication should be considered BASELINE (neutral), not positive. Only exceptional engagement and results-driven behavior should be rated as positive.
 
+## HISTORICAL CONTEXT & BENCHMARKING
+{rag_context}
+
 ## CONTEXT
 Deal ID: {deal_id}
 Recent Activity Frequency (last 7 days): {activity_frequency}

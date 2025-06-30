@@ -630,28 +630,139 @@ class KnowledgeBaseManager:
         results: List[VectorSearchResult],
         filters: Dict[str, Any]
     ) -> List[VectorSearchResult]:
-        """Apply additional filters to search results"""
+        """Apply search filters including business criteria"""
+        
+        if not filters:
+            return results
         
         filtered_results = []
+        
+        # Get current deal for business criteria
+        current_deal = filters.get('current_deal', {})
         
         for result in results:
             include = True
             
-            for filter_key, filter_value in filters.items():
-                if filter_key == 'deal_outcome' and result.metadata.get('deal_outcome') != filter_value:
-                    include = False
-                    break
-                elif filter_key == 'deal_size_category' and result.metadata.get('deal_size_category') != filter_value:
-                    include = False  
-                    break
-                elif filter_key == 'min_similarity' and result.similarity_score < filter_value:
-                    include = False
-                    break
+            # Apply business criteria filtering first if current deal context exists
+            if current_deal:
+                include = self._meets_business_similarity_criteria(result, current_deal)
+            
+            # Apply other filters only if business criteria passed
+            if include:
+                for filter_key, filter_value in filters.items():
+                    if filter_key == 'current_deal':
+                        continue  # Already handled
+                    
+                    elif filter_key == 'deal_outcome':
+                        if isinstance(filter_value, list):
+                            if result.metadata.get('deal_outcome') not in filter_value:
+                                include = False
+                                break
+                        else:
+                            if result.metadata.get('deal_outcome') != filter_value:
+                                include = False
+                                break
+                    
+                    elif filter_key == 'deal_type':
+                        if isinstance(filter_value, list):
+                            if result.metadata.get('deal_type') not in filter_value:
+                                include = False
+                                break
+                        else:
+                            if result.metadata.get('deal_type') != filter_value:
+                                include = False
+                                break
+                    
+                    elif filter_key == 'min_deal_amount':
+                        result_amount = result.metadata.get('deal_amount', 0)
+                        try:
+                            if float(result_amount) < float(filter_value):
+                                include = False
+                                break
+                        except (ValueError, TypeError):
+                            include = False
+                            break
+                    
+                    elif filter_key == 'max_deal_amount':
+                        result_amount = result.metadata.get('deal_amount', 0)
+                        try:
+                            if float(result_amount) > float(filter_value):
+                                include = False
+                                break
+                        except (ValueError, TypeError):
+                            include = False
+                            break
             
             if include:
                 filtered_results.append(result)
         
+        logger.debug(f"Applied filters: {len(results)} → {len(filtered_results)} results")
         return filtered_results
+
+    def _meets_business_similarity_criteria(
+        self,
+        result: VectorSearchResult,
+        current_deal: Dict[str, Any]
+    ) -> bool:
+        """Check if result meets business similarity criteria"""
+        
+        # Extract and validate current deal values
+        current_amount = current_deal.get('amount') or current_deal.get('deal_amount', 0)
+        current_deal_type = current_deal.get('dealtype') or current_deal.get('deal_type', '')
+        current_probability = current_deal.get('deal_stage_probability') or current_deal.get('probability', 0)
+        
+        # Extract and validate result values
+        result_amount = result.metadata.get('deal_amount') or result.metadata.get('amount', 0)
+        result_deal_type = result.metadata.get('deal_type') or result.metadata.get('dealtype', '')
+        result_probability = result.metadata.get('deal_stage_probability') or result.metadata.get('probability', 0)
+        
+        # Validate and convert types
+        try:
+            current_amount = float(current_amount) if current_amount else 0
+            result_amount = float(result_amount) if result_amount else 0
+            current_probability = float(current_probability) if current_probability else 0
+            result_probability = float(result_probability) if result_probability else 0
+        except (ValueError, TypeError):
+            logger.debug("Invalid numeric data in business criteria check")
+            return False
+        
+        # Business Criterion 1: Deal type must match exactly
+        if not current_deal_type or not result_deal_type:
+            logger.debug("Missing deal type data")
+            return False
+        
+        if current_deal_type.lower().strip() != result_deal_type.lower().strip():
+            logger.debug(f"Deal type mismatch: {current_deal_type} != {result_deal_type}")
+            return False
+        
+        # Business Criterion 2: Amount within 30% tolerance
+        if current_amount <= 0 or result_amount <= 0:
+            logger.debug("Invalid deal amounts")
+            return False
+        
+        amount_diff_percentage = abs(current_amount - result_amount) / current_amount
+        if amount_diff_percentage > 0.3:  # 30% tolerance
+            logger.debug(f"Amount difference too large: {amount_diff_percentage:.2%}")
+            return False
+        
+        # Business Criterion 3: Probability within ±0.2 tolerance
+        # Convert percentages to 0-1 scale if needed
+        if current_probability > 1:
+            current_probability = current_probability / 100.0
+        if result_probability > 1:
+            result_probability = result_probability / 100.0
+        
+        if current_probability < 0 or result_probability < 0:
+            logger.debug("Invalid probability values")
+            return False
+        
+        probability_diff = abs(current_probability - result_probability)
+        if probability_diff > 0.2:  # ±0.2 tolerance
+            logger.debug(f"Probability difference too large: {probability_diff:.2f}")
+            return False
+        
+        logger.debug(f"Deal meets business criteria - Type: {current_deal_type}, Amount diff: {amount_diff_percentage:.2%}, Prob diff: {probability_diff:.2f}")
+        return True
     
     def _optimize_cache(self) -> Dict[str, Any]:
         """Optimize cache performance"""

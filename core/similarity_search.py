@@ -36,12 +36,19 @@ class EnhancedSimilaritySearch:
         """
         self.cache_manager = cache_manager or CacheManager()
         
-        # Search configuration
+        # Search configuration - Updated to prioritize business criteria
         self.similarity_weights = {
-            'vector_similarity': 0.6,      # Core vector similarity
-            'metadata_relevance': 0.2,     # Metadata matching
-            'temporal_relevance': 0.1,     # Time-based relevance
-            'performance_boost': 0.1       # Success pattern boost
+            'vector_similarity': 0.2,
+            'metadata_relevance': 0.7,
+            'temporal_relevance': 0.05,
+            'performance_boost': 0.05
+        }
+        
+        # Business criteria thresholds
+        self.business_criteria = {
+            'amount_tolerance': 0.3,       # 30% tolerance for deal amount
+            'probability_tolerance': 0.2,  # ±0.2 tolerance for deal probability
+            'require_same_deal_type': True # Deal type must match exactly
         }
         
         # Filtering thresholds
@@ -51,7 +58,7 @@ class EnhancedSimilaritySearch:
             'min_similarity': 0.3
         }
         
-        logger.info("Enhanced Similarity Search initialized")
+        logger.info("Enhanced Similarity Search initialized with business criteria")
     
     def enhanced_search(
         self,
@@ -329,41 +336,82 @@ class EnhancedSimilaritySearch:
         result: VectorSearchResult,
         search_context: Dict[str, Any]
     ) -> float:
-        """Calculate metadata relevance score"""
+        """Calculate metadata relevance score based on business criteria"""
         
-        relevance_score = 0.0
         current_deal = search_context.get('current_deal', {})
         
         if not current_deal:
-            return 0.5  # Neutral score if no context
+            return 0.0  # No similarity if no context
         
-        # Deal size category matching
-        if (result.metadata.get('deal_size_category') == 
-            current_deal.get('deal_size_category')):
-            relevance_score += 0.3
+        # Initialize score - starts at 0, must pass all criteria to get points
+        relevance_score = 0.0
         
-        # Deal type matching
-        if (result.metadata.get('deal_type') == 
-            current_deal.get('deal_type')):
-            relevance_score += 0.3
+        # Extract current deal values
+        current_amount = current_deal.get('amount') or current_deal.get('deal_amount', 0)
+        current_deal_type = current_deal.get('dealtype') or current_deal.get('deal_type', '')
+        current_probability = current_deal.get('deal_stage_probability') or current_deal.get('probability', 0)
         
-        # Deal stage proximity
-        current_stage = current_deal.get('deal_stage', '')
-        result_stage = result.metadata.get('deal_stage', '')
-        if current_stage and result_stage:
-            if current_stage == result_stage:
-                relevance_score += 0.2
-            elif self._are_adjacent_stages(current_stage, result_stage):
-                relevance_score += 0.1
+        # Extract result values
+        result_amount = result.metadata.get('deal_amount') or result.metadata.get('amount', 0)
+        result_deal_type = result.metadata.get('deal_type') or result.metadata.get('dealtype', '')
+        result_probability = result.metadata.get('deal_stage_probability') or result.metadata.get('probability', 0)
         
-        # Activity count similarity
-        current_activities = current_deal.get('activities_count', 0)
-        result_activities = result.metadata.get('activities_count', 0)
-        if current_activities > 0 and result_activities > 0:
-            activity_similarity = 1.0 - abs(current_activities - result_activities) / max(current_activities, result_activities)
-            relevance_score += activity_similarity * 0.2
+        # Convert to numeric values
+        try:
+            current_amount = float(current_amount) if current_amount else 0
+            result_amount = float(result_amount) if result_amount else 0
+            current_probability = float(current_probability) if current_probability else 0
+            result_probability = float(result_probability) if result_probability else 0
+        except (ValueError, TypeError):
+            return 0.0  # Invalid data
         
-        return min(1.0, relevance_score)
+        # Criterion 1: Deal Type (Must match exactly) - 40% weight
+        if current_deal_type and result_deal_type:
+            if current_deal_type.lower().strip() == result_deal_type.lower().strip():
+                relevance_score += 0.4
+            else:
+                # If deal type doesn't match, this deal is not similar
+                return 0.0
+        else:
+            # Missing deal type data
+            return 0.0
+        
+        # Criterion 2: Deal Amount (Within 30% tolerance) - 40% weight  
+        if current_amount > 0 and result_amount > 0:
+            # Calculate percentage difference
+            amount_diff = abs(current_amount - result_amount) / current_amount
+            
+            if amount_diff <= self.business_criteria['amount_tolerance']:
+                # Score based on how close the amounts are
+                amount_similarity = 1.0 - (amount_diff / self.business_criteria['amount_tolerance'])
+                relevance_score += 0.4 * amount_similarity
+            else:
+                # Amount difference too large, this deal is not similar
+                return 0.0
+        else:
+            # Missing amount data
+            return 0.0
+        
+        # Criterion 3: Deal Stage Probability (Within ±0.2 tolerance) - 20% weight
+        if current_probability >= 0 and result_probability >= 0:
+            # Convert percentages to 0-1 scale if needed
+            if current_probability > 1:
+                current_probability = current_probability / 100.0
+            if result_probability > 1:
+                result_probability = result_probability / 100.0
+                
+            probability_diff = abs(current_probability - result_probability)
+            
+            if probability_diff <= self.business_criteria['probability_tolerance']:
+                # Score based on how close the probabilities are
+                probability_similarity = 1.0 - (probability_diff / self.business_criteria['probability_tolerance'])
+                relevance_score += 0.2 * probability_similarity
+            else:
+                # Probability difference too large, reduce similarity significantly
+                relevance_score *= 0.5  # Reduce by 50% but don't eliminate entirely
+        
+        # Ensure score is between 0 and 1
+        return min(1.0, max(0.0, relevance_score))
     
     def _calculate_temporal_relevance(
         self,

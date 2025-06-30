@@ -4,7 +4,15 @@ from datetime import datetime
 import statistics
 from collections import defaultdict
 
+import sys
+from pathlib import Path
+
+# Add project root to Python path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
 from models.schemas import VectorSearchResult
+
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +91,7 @@ class RAGContextBuilder:
         for deal in deals:
             # Check for minimum data quality
             metadata = deal.metadata
+            print("🚩🚩🚩🚩🚩🚩", metadata)
             
             # Must have basic activity data
             if metadata.get('activities_count', 0) < 2:
@@ -92,9 +101,9 @@ class RAGContextBuilder:
             if not metadata.get('deal_outcome'):
                 continue
                 
-            # Must have reasonable similarity score (> 0.3)
-            if deal.similarity_score < 0.3:
-                continue
+            # # Must have reasonable similarity score (> 0.3)
+            # if deal.similarity_score < 0.3:
+            #     continue
                 
             quality_deals.append(deal)
         
