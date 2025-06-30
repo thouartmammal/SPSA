@@ -100,6 +100,9 @@ class ChromaDBVectorStore(VectorStore):
                 combined_text=results['documents'][0][i]
             )
             search_results.append(result)
+
+        logger.info(f"ChromaDB distances: {results['distances'][0]}")
+        logger.info(f"Converted similarities: {[1 - d for d in results['distances'][0]]}")
         
         logger.info(f"Found {len(search_results)} similar patterns")
         return search_results

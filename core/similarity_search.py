@@ -5,6 +5,14 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 import math
 
+import sys
+from pathlib import Path
+
+# Add project root to Python path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+
 from models.schemas import VectorSearchResult, DealPattern
 from utils.cache import CacheManager
 from utils.helpers import calculate_similarity_score, normalize_scores, validate_search_parameters

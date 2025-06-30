@@ -13,10 +13,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
 import os
-
-# Add project root to path
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from api.routes import router
 from api.middleware import (
@@ -178,7 +175,7 @@ app = FastAPI(
     version="1.0.0",
     contact={
         "name": "Sales Sentiment RAG Team",
-        "email": "support@salessentiment.com",
+        "email": "aman.jaiswar@glynac.ai",
     },
     license_info={
         "name": "MIT License",

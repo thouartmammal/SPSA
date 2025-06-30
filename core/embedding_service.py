@@ -123,7 +123,7 @@ class HuggingFaceEmbeddingService(EmbeddingService):
 def get_embedding_service() -> EmbeddingService:
     """Factory function to get the configured embedding service"""
     service_type = settings.EMBEDDING_SERVICE.lower()
-    
+    print("=="*10, service_type)
     if service_type == "openai":
         return OpenAIEmbeddingService()
     elif service_type == "sentence_transformers":

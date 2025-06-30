@@ -88,6 +88,9 @@ class SentimentAnalyzer:
                     deal_metadata=processed_deal.metadata,
                     insight_type="comprehensive"
                 )
+
+            logger.info(f"RAG context retrieved: {len(rag_context)} characters")
+            logger.debug(f"RAG context content: {rag_context[:500]}...")  # First 500 chars
             
             # Perform LLM sentiment analysis
             logger.debug("Performing LLM sentiment analysis...")

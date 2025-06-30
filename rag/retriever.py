@@ -82,6 +82,9 @@ class RAGRetriever:
                 top_k=top_k * 2  # Get more results to filter
             )
             
+            logger.info(f"Raw results similarity scores: {[r.similarity_score for r in results]}")
+            logger.info(f"Using similarity threshold: {min_similarity}")
+
             # Filter by similarity threshold
             filtered_results = [
                 result for result in results 
@@ -89,8 +92,8 @@ class RAGRetriever:
             ]
             
             # Apply additional filters if provided
-            if filters:
-                filtered_results = self._apply_filters(filtered_results, filters)
+            # if filters:
+            #     filtered_results = self._apply_filters(filtered_results, filters)
             
             # Limit to requested number
             final_results = filtered_results[:top_k]

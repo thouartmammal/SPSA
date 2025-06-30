@@ -10,8 +10,8 @@ load_dotenv()
 class Settings:
     """Configuration settings"""
 
-    MAX_RETRIEVED_DOCS: int = 5 
-    SIMILARITY_THRESHOLD: float = 0.3
+    MAX_RETRIEVED_DOCS: int = 20
+    SIMILARITY_THRESHOLD: float = 0.1
     CONTEXT_WINDOW_SIZE: int = 4000
     
     # Embedding Service
