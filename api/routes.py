@@ -138,38 +138,28 @@ class KnowledgeBaseBuildRequest(BaseModel):
     rebuild: bool = Field(False, description="Whether to rebuild existing knowledge base")
     batch_size: int = Field(50, description="Batch processing size")
 
-# Response models
+# CORRECTED Response models matching your exact format
 class ActivityBreakdownItem(BaseModel):
-    """Individual activity breakdown"""
+    """Individual activity breakdown - MATCHES YOUR EXACT FORMAT"""
     sentiment: str
     sentiment_score: float
     key_indicators: List[str]
     count: int
-    performance_rating: str
+    # Removed performance_rating - not in your format!
 
 class DealMomentumIndicators(BaseModel):
-    """Deal momentum indicators"""
+    """Deal momentum indicators - MATCHES YOUR EXACT FORMAT"""
     stage_progression: str
     client_engagement_trend: str
     competitive_position: str
-    activity_velocity: str
-
-class PerformanceAnalysis(BaseModel):
-    """Performance analysis metrics"""
-    response_time_rating: str
-    communication_consistency: str
-    proactive_behavior: str
-    client_relationship_quality: str
 
 class SentimentAnalysisResponse(BaseModel):
-    """Sentiment analysis response"""
-    deal_id: str
+    """Sentiment analysis response - MATCHES YOUR EXACT FORMAT"""
     overall_sentiment: str
     sentiment_score: float = Field(..., ge=-1.0, le=1.0)
     confidence: float = Field(..., ge=0.0, le=1.0)
     activity_breakdown: Dict[str, ActivityBreakdownItem]
     deal_momentum_indicators: DealMomentumIndicators
-    performance_analysis: PerformanceAnalysis
     reasoning: str
     professional_gaps: List[str]
     excellence_indicators: List[str]
@@ -178,8 +168,6 @@ class SentimentAnalysisResponse(BaseModel):
     temporal_trend: str
     recommended_actions: List[str]
     context_analysis_notes: List[str]
-    benchmark_comparison: str
-    analysis_metadata: Dict[str, Any]
     timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
 class SearchResponse(BaseModel):
@@ -269,7 +257,7 @@ def get_request_id(request: Request) -> str:
     """Get request ID from request state"""
     return getattr(request.state, 'request_id', 'unknown')
 
-# Analysis endpoints
+# CORRECTED Analysis endpoints
 @router.post(
     "/analyze/sentiment",
     response_model=SentimentAnalysisResponse,
@@ -282,7 +270,7 @@ async def analyze_sentiment(
     req: Request,
     analyzer=Depends(get_sentiment_analyzer)
 ):
-    """Analyze salesperson sentiment from deal activities"""
+    """Analyze salesperson sentiment from deal activities - RETURNS YOUR EXACT FORMAT"""
     
     request_id = get_request_id(req)
     logger.info(f"[{request_id}] Starting sentiment analysis for deal {request.deal_data.deal_id}")
@@ -305,57 +293,38 @@ async def analyze_sentiment(
         )
         
         processing_time = time.time() - start_time
+        logger.info(f"[{request_id}] Raw LLM result keys: {list(result.keys())}")
         
-        # Add processing metadata
-        result["analysis_metadata"]["processing_time_seconds"] = processing_time
-        result["analysis_metadata"]["request_id"] = request_id
-        result["analysis_metadata"]["analysis_type"] = request.analysis_type
-        
-        # Convert activity_breakdown to proper format
+        # CORRECTED: Convert activity_breakdown to proper format (YOUR FORMAT)
         activity_breakdown = {}
         for activity_type, breakdown in result.get("activity_breakdown", {}).items():
             activity_breakdown[activity_type] = ActivityBreakdownItem(
                 sentiment=breakdown.get("sentiment", "neutral"),
                 sentiment_score=breakdown.get("sentiment_score", 0.0),
                 key_indicators=breakdown.get("key_indicators", []),
-                count=breakdown.get("count", 0),
-                performance_rating=breakdown.get("performance_rating", "fair")
+                count=breakdown.get("count", 0)
+                # REMOVED performance_rating - not in your format!
             )
         
-        # Convert other nested objects
-        deal_momentum = DealMomentumIndicators(
-            stage_progression=result.get("deal_momentum_indicators", {}).get("stage_progression", "unknown"),
-            client_engagement_trend=result.get("deal_momentum_indicators", {}).get("client_engagement_trend", "unknown"),
-            competitive_position=result.get("deal_momentum_indicators", {}).get("competitive_position", "unknown"),
-            activity_velocity=result.get("deal_momentum_indicators", {}).get("activity_velocity", "unknown")
-        )
-        
-        performance_analysis = PerformanceAnalysis(
-            response_time_rating=result.get("performance_analysis", {}).get("response_time_rating", "fair"),
-            communication_consistency=result.get("performance_analysis", {}).get("communication_consistency", "fair"),
-            proactive_behavior=result.get("performance_analysis", {}).get("proactive_behavior", "medium"),
-            client_relationship_quality=result.get("performance_analysis", {}).get("client_relationship_quality", "moderate")
-        )
-        
-        # Create response
+        # CORRECTED: Create response matching YOUR EXACT FORMAT
         response = SentimentAnalysisResponse(
-            deal_id=result["deal_context"]["deal_id"],
-            overall_sentiment=result["overall_sentiment"],
-            sentiment_score=result["sentiment_score"],
-            confidence=result["confidence"],
+            overall_sentiment=result.get("overall_sentiment", "neutral"),
+            sentiment_score=result.get("sentiment_score", 0.0),
+            confidence=result.get("confidence", 0.5),
             activity_breakdown=activity_breakdown,
-            deal_momentum_indicators=deal_momentum,
-            performance_analysis=performance_analysis,
-            reasoning=result["reasoning"],
+            deal_momentum_indicators=DealMomentumIndicators(
+                stage_progression=result.get("deal_momentum_indicators", {}).get("stage_progression", "unknown"),
+                client_engagement_trend=result.get("deal_momentum_indicators", {}).get("client_engagement_trend", "unknown"),
+                competitive_position=result.get("deal_momentum_indicators", {}).get("competitive_position", "unknown")
+            ),
+            reasoning=result.get("reasoning", "No reasoning provided"),
             professional_gaps=result.get("professional_gaps", []),
             excellence_indicators=result.get("excellence_indicators", []),
             risk_indicators=result.get("risk_indicators", []),
             opportunity_indicators=result.get("opportunity_indicators", []),
             temporal_trend=result.get("temporal_trend", "stable"),
             recommended_actions=result.get("recommended_actions", []),
-            context_analysis_notes=result.get("context_analysis_notes", []),
-            benchmark_comparison=result.get("benchmark_comparison", "insufficient_data"),
-            analysis_metadata=result["analysis_metadata"]
+            context_analysis_notes=result.get("context_analysis_notes", [])
         )
         
         logger.info(f"[{request_id}] Sentiment analysis completed in {processing_time:.2f}s")
@@ -424,53 +393,39 @@ async def analyze_batch(
                 failed_count += 1
             else:
                 try:
-                    # Create proper response object
+                    # Create proper response object using corrected format
                     activity_breakdown = {}
                     for activity_type, breakdown in result.get("activity_breakdown", {}).items():
                         activity_breakdown[activity_type] = ActivityBreakdownItem(
                             sentiment=breakdown.get("sentiment", "neutral"),
                             sentiment_score=breakdown.get("sentiment_score", 0.0),
                             key_indicators=breakdown.get("key_indicators", []),
-                            count=breakdown.get("count", 0),
-                            performance_rating=breakdown.get("performance_rating", "fair")
+                            count=breakdown.get("count", 0)
+                            # REMOVED performance_rating!
                         )
                     
-                    deal_momentum = DealMomentumIndicators(
-                        stage_progression=result.get("deal_momentum_indicators", {}).get("stage_progression", "unknown"),
-                        client_engagement_trend=result.get("deal_momentum_indicators", {}).get("client_engagement_trend", "unknown"),
-                        competitive_position=result.get("deal_momentum_indicators", {}).get("competitive_position", "unknown"),
-                        activity_velocity=result.get("deal_momentum_indicators", {}).get("activity_velocity", "unknown")
-                    )
-                    
-                    performance_analysis = PerformanceAnalysis(
-                        response_time_rating=result.get("performance_analysis", {}).get("response_time_rating", "fair"),
-                        communication_consistency=result.get("performance_analysis", {}).get("communication_consistency", "fair"),
-                        proactive_behavior=result.get("performance_analysis", {}).get("proactive_behavior", "medium"),
-                        client_relationship_quality=result.get("performance_analysis", {}).get("client_relationship_quality", "moderate")
-                    )
-                    
                     response_obj = SentimentAnalysisResponse(
-                        deal_id=result["deal_context"]["deal_id"],
-                        overall_sentiment=result["overall_sentiment"],
-                        sentiment_score=result["sentiment_score"],
-                        confidence=result["confidence"],
+                        overall_sentiment=result.get("overall_sentiment", "neutral"),
+                        sentiment_score=result.get("sentiment_score", 0.0),
+                        confidence=result.get("confidence", 0.5),
                         activity_breakdown=activity_breakdown,
-                        deal_momentum_indicators=deal_momentum,
-                        performance_analysis=performance_analysis,
-                        reasoning=result["reasoning"],
+                        deal_momentum_indicators=DealMomentumIndicators(
+                            stage_progression=result.get("deal_momentum_indicators", {}).get("stage_progression", "unknown"),
+                            client_engagement_trend=result.get("deal_momentum_indicators", {}).get("client_engagement_trend", "unknown"),
+                            competitive_position=result.get("deal_momentum_indicators", {}).get("competitive_position", "unknown")
+                        ),
+                        reasoning=result.get("reasoning", "No reasoning provided"),
                         professional_gaps=result.get("professional_gaps", []),
                         excellence_indicators=result.get("excellence_indicators", []),
                         risk_indicators=result.get("risk_indicators", []),
                         opportunity_indicators=result.get("opportunity_indicators", []),
                         temporal_trend=result.get("temporal_trend", "stable"),
                         recommended_actions=result.get("recommended_actions", []),
-                        context_analysis_notes=result.get("context_analysis_notes", []),
-                        benchmark_comparison=result.get("benchmark_comparison", "insufficient_data"),
-                        analysis_metadata=result.get("analysis_metadata", {})
+                        context_analysis_notes=result.get("context_analysis_notes", [])
                     )
                     
                     batch_results.append({
-                        "deal_id": result["deal_context"]["deal_id"],
+                        "deal_id": result.get("deal_context", {}).get("deal_id", "unknown"),
                         "success": True,
                         "result": response_obj,
                         "error": None
@@ -503,7 +458,7 @@ async def analyze_batch(
             detail=f"Batch analysis failed: {str(e)}"
         )
 
-# Search endpoints
+# Search endpoints (unchanged)
 @router.post(
     "/search",
     response_model=SearchResponse,
@@ -607,7 +562,7 @@ async def search_success_patterns(
             detail=f"Success patterns search failed: {str(e)}"
         )
 
-# Knowledge Base Management endpoints
+# Knowledge Base Management endpoints (unchanged)
 @router.get(
     "/knowledge-base/status",
     response_model=KnowledgeBaseStatus,
@@ -704,7 +659,7 @@ async def build_knowledge_base(
             detail=f"Knowledge base build failed: {str(e)}"
         )
 
-# Utility endpoints
+# Utility endpoints (unchanged)
 @router.get(
     "/deals/{deal_id}/insights",
     summary="Get deal insights",

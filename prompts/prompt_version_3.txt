@@ -7,6 +7,8 @@ Deal ID: {deal_id}
 Recent Activity Frequency (last 7 days): {activity_frequency}
 Total Activities Analyzed: {total_activities}
 
+Recent Activity Frequency: {activity_frequency}
+
 ## ADAPTIVE ACTIVITIES ANALYSIS
 The following activities have been intelligently prioritized and organized for optimal sentiment analysis:
 
