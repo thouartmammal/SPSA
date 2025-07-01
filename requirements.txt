@@ -4,11 +4,12 @@ fastapi==0.115.14
 groq==0.26.0
 numpy==2.2.4
 openai==1.84.0
+pinecone==7.3.0
 pydantic==2.11.5
 python-dotenv==1.1.0
 redis==6.2.0
 sentence-transformers==4.1.0
+structlog==24.1.0
 torch==2.6.0
 transformers==4.52.4
 uvicorn==0.34.3
-structlog==24.1.0
