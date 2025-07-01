@@ -1,73 +1,312 @@
-# Sales Sentiment RAG System
+# Sales Sentiment RAG System Architecture
 
-An advanced sales sentiment analysis system powered by Retrieval-Augmented Generation (RAG) that analyzes salesperson performance and deal sentiment using historical sales data and activity patterns.
+## System Overview
 
-## 🎯 Overview
+The Sales Sentiment RAG (Retrieval-Augmented Generation) system is a sophisticated AI-powered platform that analyzes salesperson performance and sentiment from CRM activities using historical deal patterns and LLM-powered insights.
 
-The Sales Sentiment RAG system provides intelligent analysis of sales activities and deal progression by combining:
+## Architecture Diagram
 
-- **Historical Pattern Recognition**: Analyzes past deals to identify success/failure patterns
-- **Real-time Sentiment Analysis**: Evaluates salesperson performance using LLM-powered analysis
-- **Contextual Intelligence**: Uses RAG to provide context-aware insights from similar deals
-- **Performance Benchmarking**: Compares current performance against historical data
-
-## 🏗️ Architecture
-
+```mermaid
+graph TB
+    subgraph "Client Layer"
+        C[REST API Clients]
+        SW[Swagger UI /docs]
+        CURL[cURL/Postman Testing]
+        WEB[Web Dashboard]
+    end
+    
+    subgraph "API Gateway & Load Balancing"
+        LB[FastAPI Server]
+        MW[Middleware Stack]
+        RL[Rate Limiter]
+        AUTH[Authentication]
+        LOG[Request Logging]
+        ERR[Error Handling]
+    end
+    
+    subgraph "Core Application Services"
+        SA[Sentiment Analyzer]
+        RAG[RAG Retriever]
+        KB[Knowledge Base Manager]
+        DP[Data Processor]
+        CB[Context Builder]
+    end
+    
+    subgraph "AI/ML Layer"
+        LLM[LLM Clients]
+        EMB[Embedding Service]
+        PROMPT[Prompt Builder]
+        
+        subgraph "LLM Providers"
+            AZURE[Azure OpenAI]
+            OAI[OpenAI]
+            GROQ[Groq]
+            ANTHRO[Anthropic Claude]
+        end
+        
+        subgraph "Embedding Providers"
+            ST[Sentence Transformers]
+            OAIEMB[OpenAI Embeddings]
+            HF[HuggingFace]
+        end
+    end
+    
+    subgraph "Data Storage Layer"
+        VS[Vector Store]
+        CACHE[Redis Cache]
+        FS[File System]
+        
+        subgraph "Vector Databases"
+            CHROMA[ChromaDB Local]
+            PINECONE[Pinecone Cloud]
+        end
+    end
+    
+    subgraph "Data Sources"
+        CRM[CRM Systems]
+        HUBSPOT[HubSpot]
+        SF[Salesforce]
+        CSV[CSV Files]
+        JSON[JSON Data]
+    end
+    
+    subgraph "Utilities & Monitoring"
+        HELPERS[Helper Functions]
+        VALID[Data Validation]
+        PERF[Performance Monitoring]
+        HEALTH[Health Checks]
+    end
+    
+    %% Client Connections
+    C --> LB
+    SW --> LB
+    CURL --> LB
+    WEB --> LB
+    
+    %% API Gateway Flow
+    LB --> MW
+    MW --> RL
+    MW --> AUTH
+    MW --> LOG
+    MW --> ERR
+    MW --> SA
+    
+    %% Core Service Connections
+    SA --> RAG
+    SA --> LLM
+    SA --> PROMPT
+    RAG --> KB
+    RAG --> VS
+    RAG --> CB
+    KB --> DP
+    KB --> VS
+    DP --> EMB
+    
+    %% AI/ML Connections
+    LLM --> AZURE
+    LLM --> OAI
+    LLM --> GROQ
+    LLM --> ANTHRO
+    EMB --> ST
+    EMB --> OAIEMB
+    EMB --> HF
+    
+    %% Data Storage Connections
+    VS --> CHROMA
+    VS --> PINECONE
+    SA --> CACHE
+    RAG --> CACHE
+    KB --> FS
+    
+    %% Data Source Integration
+    DP --> CRM
+    DP --> HUBSPOT
+    DP --> SF
+    DP --> CSV
+    DP --> JSON
+    
+    %% Utility Connections
+    SA --> HELPERS
+    DP --> VALID
+    LB --> HEALTH
+    SA --> PERF
+    
+    %% Styling
+    classDef client fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    classDef api fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    classDef core fill:#e8f5e8,stroke:#1b5e20,stroke-width:2px
+    classDef ai fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
+    classDef storage fill:#ffebee,stroke:#b71c1c,stroke-width:2px
+    classDef data fill:#f1f8e9,stroke:#33691e,stroke-width:2px
+    classDef utils fill:#fce4ec,stroke:#880e4f,stroke-width:2px
+    classDef provider fill:#e8eaf6,stroke:#1a237e,stroke-width:2px
+    
+    class C,SW,CURL,WEB client
+    class LB,MW,RL,AUTH,LOG,ERR api
+    class SA,RAG,KB,DP,CB core
+    class LLM,EMB,PROMPT ai
+    class AZURE,OAI,GROQ,ANTHRO,ST,OAIEMB,HF provider
+    class VS,CACHE,FS,CHROMA,PINECONE storage
+    class CRM,HUBSPOT,SF,CSV,JSON data
+    class HELPERS,VALID,PERF,HEALTH utils
 ```
-sales_sentiment_rag/
-├── config/
-│   ├── __init__.py
-│   └── settings.py              # Configuration and environment variables
-├── models/
-│   ├── __init__.py
-│   ├── schemas.py               # Pydantic models for data validation
-│   └── deal_activity.py         # Deal activity data models
-├── core/
-│   ├── __init__.py
-│   ├── embedding_service.py     # Embedding generation (OpenAI, Sentence Transformers)
-│   ├── vector_store.py          # Vector database operations (ChromaDB, Pinecone)
-│   ├── data_processor.py        # Process deal activities into embeddings
-│   └── similarity_search.py     # Search similar patterns
-├── rag/
-│   ├── __init__.py
-│   ├── context_builder.py       # Build context from similar cases
-│   ├── retriever.py             # Retrieve relevant historical patterns
-│   └── knowledge_base.py        # Manage knowledge base operations
-├── llm/
-│   ├── __init__.py
-│   ├── llm_clients.py           # LLM client (OpenAI, Anthropic, Groq, Azure)
-│   ├── prompt_builder.py        # Build prompts with RAG context
-│   └── sentiment_analyzer.py    # Main sentiment analysis engine
-├── api/
-│   ├── __init__.py
-│   ├── main.py                  # FastAPI application
-│   ├── routes.py                # API endpoints
-│   └── middleware.py            # Authentication, logging, rate limiting
-├── utils/
-│   ├── __init__.py
-│   ├── cache.py                 # Redis caching (optional)
-│   ├── logging_config.py        # Structured logging
-│   └── helpers.py               # Utility functions
-├── scripts/
-│   ├── build_knowledge_base.py  # Script to populate vector DB
-│   ├── test_system.py           # System testing
-│   └── migrate_data.py          # Data migration utilities
-├── prompts/
-│   ├── prompt_version_3.txt     # Advanced sentiment analysis prompts
-│   ├── salesperson_sentiment_prompt.txt
-│   └── coaching_recommendations_prompt.txt
-├── data/
-│   ├── final_deal_details.json  # Deal data
-│   └── processed/               # Processed data files
-├── tests/
-│   ├── __init__.py
-│   ├── test_embedding.py
-│   ├── test_vector_store.py
-│   └── test_rag.py
-├── requirements.txt
-├── .env
-└── README.md
+
+## Component Details
+
+### 🌐 Client Layer
+- **REST API Clients**: External applications consuming the API
+- **Swagger UI**: Interactive API documentation at `/docs`
+- **Testing Tools**: cURL, Postman for API testing
+- **Web Dashboard**: Optional frontend interface
+
+### 🚪 API Gateway & Middleware
+- **FastAPI Server**: High-performance async web framework
+- **Rate Limiter**: Prevents API abuse (60 calls/min, 1000/hour)
+- **Authentication**: Bearer token and API key support
+- **Request Logging**: Comprehensive request/response logging
+- **Error Handling**: Standardized error responses
+
+### ⚡ Core Application Services
+- **Sentiment Analyzer**: Main orchestration service for sentiment analysis
+- **RAG Retriever**: Retrieves similar historical deal patterns
+- **Knowledge Base Manager**: Manages vector database operations
+- **Data Processor**: Processes CRM data into structured formats
+- **Context Builder**: Builds intelligent context from similar deals
+
+### 🤖 AI/ML Layer
+- **LLM Clients**: Multi-provider LLM integration
+  - Azure OpenAI (Recommended for enterprise)
+  - OpenAI GPT-4/3.5
+  - Groq (Fast inference)
+  - Anthropic Claude
+- **Embedding Service**: Text-to-vector conversion
+  - Sentence Transformers (Local, free)
+  - OpenAI text-embedding-3-large
+  - HuggingFace models
+- **Prompt Builder**: Advanced prompt engineering for salesperson analysis
+
+### 💾 Data Storage Layer
+- **Vector Store**: Similarity search and pattern storage
+  - ChromaDB (Local development)
+  - Pinecone (Production cloud)
+- **Redis Cache**: High-performance caching layer
+- **File System**: Local data and configuration storage
+
+### 📊 Data Sources
+- **CRM Systems**: Salesforce, HubSpot integration
+- **File Formats**: JSON, CSV data import
+- **Migration Tools**: Data transformation utilities
+
+### 🛠️ Utilities & Monitoring
+- **Helper Functions**: Text processing, validation, similarity calculations
+- **Performance Monitoring**: Execution time tracking
+- **Health Checks**: System status monitoring
+- **Data Validation**: Input/output validation
+
+## Data Flow
+
+### 1. Deal Sentiment Analysis Flow
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API
+    participant Analyzer
+    participant RAG
+    participant LLM
+    participant VectorDB
+    
+    Client->>API: POST /analyze/sentiment
+    API->>Analyzer: Process deal data
+    Analyzer->>RAG: Get similar patterns
+    RAG->>VectorDB: Vector similarity search
+    VectorDB-->>RAG: Historical patterns
+    RAG-->>Analyzer: Contextual insights
+    Analyzer->>LLM: Generate sentiment analysis
+    LLM-->>Analyzer: Analysis results
+    Analyzer-->>API: Structured response
+    API-->>Client: JSON sentiment analysis
 ```
+
+### 2. Knowledge Base Building Flow
+```mermaid
+sequenceDiagram
+    participant Admin
+    participant API
+    participant KB
+    participant Processor
+    participant Embedding
+    participant VectorDB
+    
+    Admin->>API: POST /knowledge-base/build
+    API->>KB: Start build process
+    KB->>Processor: Process deal files
+    Processor->>Embedding: Generate embeddings
+    Embedding-->>Processor: Vector embeddings
+    Processor-->>KB: Processed patterns
+    KB->>VectorDB: Store patterns
+    VectorDB-->>KB: Confirmation
+    KB-->>API: Build results
+    API-->>Admin: Success response
+```
+
+## Key Features
+
+### 🎯 Advanced Sentiment Analysis
+- **Professional Standards**: Applies strict salesperson evaluation criteria
+- **Multi-dimensional Analysis**: Email, call, meeting, note, and task analysis
+- **Temporal Patterns**: Analyzes activity trends and momentum
+- **Performance Benchmarking**: Compares against successful deal patterns
+
+### 🔍 Intelligent RAG System
+- **Business Criteria Filtering**: Filters by deal type, amount, and probability
+- **Contextual Similarity**: Finds deals with similar characteristics
+- **Historical Insights**: Provides success/failure pattern analysis
+- **Adaptive Context**: Prioritizes recent and important activities
+
+### ⚡ High Performance
+- **Async Processing**: FastAPI async support
+- **Multi-Provider Redundancy**: Multiple LLM and embedding providers
+- **Intelligent Caching**: Redis caching for embeddings and results
+- **Batch Processing**: Efficient bulk deal analysis
+
+### 🔒 Production Ready
+- **Rate Limiting**: Prevents abuse and ensures fair usage
+- **Error Handling**: Comprehensive error management
+- **Health Monitoring**: System health and performance tracking
+- **Authentication**: Secure API access control
+
+## Deployment Architecture
+
+### Development Setup
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   FastAPI       │    │   ChromaDB      │    │   Local Files   │
+│   Port 8000     │────│   Local Vector  │────│   JSON Data     │
+│   Single Node   │    │   Storage       │    │   Config        │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+```
+
+
+## Scalability Considerations
+
+### Horizontal Scaling
+- Multiple FastAPI instances behind load balancer
+- Distributed Redis cache cluster
+- Cloud vector database (Pinecone)
+
+### Performance Optimization
+- Embedding caching reduces computation costs
+- LLM response caching prevents duplicate API calls
+- Batch processing for multiple deal analysis
+- Async processing for concurrent requests
+
+### Cost Management
+- Local embedding models reduce API costs
+- Intelligent caching minimizes LLM API usage
+- Configurable rate limiting controls usage
+- Multiple provider support for cost optimization
+
+This architecture provides a robust, scalable, and production-ready sales sentiment analysis system that can handle enterprise workloads while maintaining high performance and reliability.
 
 ## 🚀 Quick Start
 
