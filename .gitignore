@@ -15,5 +15,7 @@ __pycache__/
 # Optional: Ignore VSCode settings (if you use VSCode)
 .vscode/
 
+data/
+
 # Optional: Ignore MacOS system files
 .DS_Store

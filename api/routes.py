@@ -691,59 +691,59 @@ async def analyze_sentiment(
 #             detail=f"Failed to get knowledge base status: {str(e)}"
 #         )
 
-# @router.post(
-#     "/knowledge-base/build",
-#     response_model=KnowledgeBaseBuildResponse,
-#     summary="Build knowledge base",
-#     description="Build or rebuild the knowledge base from data sources",
-#     tags=["Knowledge Base"]
-# )
-# async def build_knowledge_base(
-#     request: KnowledgeBaseBuildRequest,
-#     req: Request,
-#     background_tasks: BackgroundTasks,
-#     kb_manager=Depends(get_knowledge_base_manager)
-# ):
-#     """Build knowledge base from data sources"""
+@router.post(
+    "/knowledge-base/build",
+    response_model=KnowledgeBaseBuildResponse,
+    summary="Build knowledge base",
+    description="Build or rebuild the knowledge base from data sources",
+    tags=["Knowledge Base"]
+)
+async def build_knowledge_base(
+    request: KnowledgeBaseBuildRequest,
+    req: Request,
+    background_tasks: BackgroundTasks,
+    kb_manager=Depends(get_knowledge_base_manager)
+):
+    """Build knowledge base from data sources"""
     
-#     request_id = get_request_id(req)
-#     logger.info(f"[{request_id}] Starting knowledge base build with {len(request.data_sources)} sources")
+    request_id = get_request_id(req)
+    logger.info(f"[{request_id}] Starting knowledge base build with {len(request.data_sources)} sources")
     
-#     try:
-#         # Validate data sources exist
-#         from pathlib import Path
-#         for source in request.data_sources:
-#             if not Path(source).exists():
-#                 raise HTTPException(
-#                     status_code=status.HTTP_400_BAD_REQUEST,
-#                     detail=f"Data source not found: {source}"
-#                 )
+    try:
+        # Validate data sources exist
+        from pathlib import Path
+        for source in request.data_sources:
+            if not Path(source).exists():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Data source not found: {source}"
+                )
         
-#         # Start build process
-#         result = kb_manager.build_knowledge_base(
-#             data_sources=request.data_sources,
-#             rebuild=request.rebuild,
-#             batch_size=request.batch_size
-#         )
+        # Start build process
+        result = kb_manager.build_knowledge_base(
+            data_sources=request.data_sources,
+            rebuild=request.rebuild,
+            batch_size=request.batch_size
+        )
         
-#         if result["success"]:
-#             logger.info(f"[{request_id}] Knowledge base build completed successfully")
-#             return KnowledgeBaseBuildResponse(**result)
-#         else:
-#             logger.error(f"[{request_id}] Knowledge base build failed: {result.get('error')}")
-#             raise HTTPException(
-#                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-#                 detail=result.get("error", "Build failed")
-#             )
+        if result["success"]:
+            logger.info(f"[{request_id}] Knowledge base build completed successfully")
+            return KnowledgeBaseBuildResponse(**result)
+        else:
+            logger.error(f"[{request_id}] Knowledge base build failed: {result.get('error')}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=result.get("error", "Build failed")
+            )
         
-#     except HTTPException:
-#         raise
-#     except Exception as e:
-#         logger.error(f"[{request_id}] Knowledge base build failed: {str(e)}")
-#         raise HTTPException(
-#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-#             detail=f"Knowledge base build failed: {str(e)}"
-#         )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[{request_id}] Knowledge base build failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Knowledge base build failed: {str(e)}"
+        )
 
 # # Utility endpoints (unchanged)
 # @router.get(
