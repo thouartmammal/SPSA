@@ -39,7 +39,7 @@ class OpenAIProvider(LLMProvider):
         self.model = model
         logger.info(f"Initialized OpenAI provider with model: {model}")
     
-    def generate_response(self, prompt: str, max_tokens: int = 2000) -> str:
+    def generate_response(self, prompt: str, max_tokens: int = 3000) -> str:
         """Generate response using OpenAI"""
         try:
             response = self.client.chat.completions.create(
@@ -107,7 +107,7 @@ class GroqProvider(LLMProvider):
         self.model = model
         logger.info(f"Initialized Groq provider with model: {model}")
     
-    def generate_response(self, prompt: str, max_tokens: int = 2000) -> str:
+    def generate_response(self, prompt: str, max_tokens: int = 3000) -> str:
         """Generate response using Groq"""
         try:
             chat_completion = self.client.chat.completions.create(
@@ -132,7 +132,7 @@ class GroqProvider(LLMProvider):
         return f"Groq ({self.model})"
 
 class AzureOpenAIProvider(LLMProvider):
-    """Azure OpenAI LLM Provider"""
+    """Azure OpenAI LLM Provider using responses API"""
     
     def __init__(self, api_key: str, endpoint: str, deployment_name: str, api_version: str = "2024-02-15-preview"):
         if not openai:
@@ -154,21 +154,188 @@ class AzureOpenAIProvider(LLMProvider):
         self.endpoint = endpoint
         logger.info(f"Initialized Azure OpenAI provider with deployment: {deployment_name}")
     
-    def generate_response(self, prompt: str, max_tokens: int = 2000) -> str:
-        """Generate response using Azure OpenAI"""
+    def _extract_content_safely(self, response_dict: dict) -> str:
+        """Safely extract content from Azure OpenAI response with proper error handling"""
         try:
-            response = self.client.chat.completions.create(
+            # Log the response structure for debugging
+            logger.info(f"Response structure keys: {list(response_dict.keys())}")
+            
+            # Check if 'output' exists
+            if 'output' not in response_dict:
+                raise ValueError("Response missing 'output' field")
+            
+            output = response_dict['output']
+            if not isinstance(output, list):
+                raise ValueError(f"Expected 'output' to be a list, got {type(output)}")
+            
+            if len(output) == 0:
+                raise ValueError("Response 'output' list is empty")
+            
+            # Find messages with type="message"
+            messages = [item for item in output if isinstance(item, dict) and item.get('type') == "message"]
+            
+            if len(messages) == 0:
+                # Fallback: try to find any item with 'content'
+                messages = [item for item in output if isinstance(item, dict) and 'content' in item]
+                if len(messages) == 0:
+                    raise ValueError("No messages found with type='message' or 'content' field")
+            
+            # Get the first message
+            message = messages[0]
+            
+            # Check if message has 'content'
+            if 'content' not in message:
+                raise ValueError("Message missing 'content' field")
+            
+            content = message['content']
+            if not isinstance(content, list):
+                raise ValueError(f"Expected 'content' to be a list, got {type(content)}")
+            
+            if len(content) == 0:
+                raise ValueError("Message 'content' list is empty")
+            
+            # Get the first content item
+            content_item = content[0]
+            if not isinstance(content_item, dict):
+                raise ValueError(f"Expected content item to be a dict, got {type(content_item)}")
+            
+            # Check if content item has 'text'
+            if 'text' not in content_item:
+                raise ValueError("Content item missing 'text' field")
+            
+            text = content_item['text']
+            if not isinstance(text, str):
+                raise ValueError(f"Expected 'text' to be a string, got {type(text)}")
+            
+            return text
+            
+        except Exception as e:
+            logger.error(f"Error extracting content: {e}")
+            logger.error(f"Response structure: {response_dict}")
+            raise
+    
+    def _clean_json_response(self, raw_content: str) -> str:
+        """
+        Clean Azure OpenAI response to extract pure JSON.
+        """
+        import re
+        import json
+        
+        if not raw_content or not raw_content.strip():
+            raise ValueError("Empty or whitespace-only response")
+        
+        # Log the raw content for debugging
+        logger.info(f"Raw Azure response : {raw_content}\n{type(raw_content)}")
+        
+        # Step 1: Basic cleanup - remove leading/trailing whitespace
+        content = raw_content.strip()
+        
+        # Step 2: If it's already valid JSON, return as-is
+        try:
+            json.loads(content)
+            logger.debug("Content is already valid JSON")
+            return content
+        except json.JSONDecodeError:
+            logger.debug("Content is not valid JSON, attempting to clean")
+        
+        # Step 3: Remove markdown code blocks if present
+        markdown_pattern = r'```(?:json)?\s*(.*?)\s*```'
+        markdown_match = re.search(markdown_pattern, content, re.DOTALL | re.IGNORECASE)
+        if markdown_match:
+            content = markdown_match.group(1).strip()
+            logger.debug("Removed markdown code block")
+            
+            # Check if it's valid JSON after markdown removal
+            try:
+                json.loads(content)
+                return content
+            except json.JSONDecodeError:
+                pass
+        
+        # Step 4: Look for JSON pattern in the text
+        json_pattern = r'\{(?:[^{}]|{[^{}]*})*\}'
+        json_matches = re.findall(json_pattern, content, re.DOTALL)
+        
+        for match in json_matches:
+            try:
+                # Test if this match is valid JSON
+                json.loads(match)
+                logger.debug("Found valid JSON using regex pattern")
+                return match
+            except json.JSONDecodeError:
+                continue
+        
+        # Step 5: Try to find JSON by looking for lines that start and end with braces
+        lines = content.split('\n')
+        json_lines = []
+        in_json = False
+        brace_count = 0
+        
+        for line in lines:
+            stripped_line = line.strip()
+            if not in_json and stripped_line.startswith('{'):
+                in_json = True
+                json_lines = [line]
+                brace_count = stripped_line.count('{') - stripped_line.count('}')
+            elif in_json:
+                json_lines.append(line)
+                brace_count += stripped_line.count('{') - stripped_line.count('}')
+                if brace_count == 0:
+                    # Found complete JSON object
+                    potential_json = '\n'.join(json_lines)
+                    try:
+                        json.loads(potential_json)
+                        logger.debug("Found valid JSON using line-by-line parsing")
+                        return potential_json
+                    except json.JSONDecodeError:
+                        pass
+                    in_json = False
+                    json_lines = []
+                    brace_count = 0
+        
+        # Step 6: Last resort - try to extract any string that looks like JSON
+        if '"overall_sentiment"' in content or '"sentiment_score"' in content:
+            start_brace = content.find('{')
+            end_brace = content.rfind('}')
+            
+            if start_brace != -1 and end_brace != -1 and end_brace > start_brace:
+                potential_json = content[start_brace:end_brace + 1]
+                try:
+                    json.loads(potential_json)
+                    logger.debug("Found valid JSON using brace extraction")
+                    return potential_json
+                except json.JSONDecodeError:
+                    pass
+        
+        # If all cleaning attempts fail, log the content and raise an error
+        logger.error(f"Failed to extract valid JSON from Azure response")
+        logger.error(f"Full response content: {raw_content}")
+        raise ValueError(f"Could not extract valid JSON from Azure OpenAI response. Content starts with: {raw_content[:100]}")
+    
+    def generate_response(self, prompt: str, max_tokens: int = 4000) -> str:
+        """Generate response using Azure OpenAI responses API"""
+        try:
+            # Add stronger JSON instruction to the prompt for Azure
+            enhanced_prompt = f"""{prompt}
+
+CRITICAL: Your response must be valid JSON only. Do not include any explanatory text, markdown formatting, or other content outside the JSON structure. Return only the JSON object."""
+            
+            response = self.client.responses.create(
                 model=self.deployment_name,
-                messages=[
-                    {"role": "system", "content": "You are an expert sales sentiment analyst. Always respond with valid JSON only."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=max_tokens,
-                temperature=0.1,
-                response_format={"type": "json_object"}
+                input=enhanced_prompt,
+                max_output_tokens=max_tokens
             )
             
-            return response.choices[0].message.content.strip()
+            # Convert response to dict for processing
+            response_dict = response.model_dump() if hasattr(response, 'model_dump') else dict(response)
+            
+            # Extract content safely
+            raw_content = self._extract_content_safely(response_dict)
+            
+            # Clean and extract JSON
+            cleaned_content = self._clean_json_response(raw_content)
+            
+            return cleaned_content
             
         except Exception as e:
             logger.error(f"Azure OpenAI API error: {e}")
@@ -176,7 +343,7 @@ class AzureOpenAIProvider(LLMProvider):
     
     def get_provider_name(self) -> str:
         return f"Azure OpenAI ({self.deployment_name})"
-
+    
 class PromptManager:
     """Manages prompt templates for sentiment analysis"""
     
