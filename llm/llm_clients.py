@@ -415,7 +415,7 @@ class LLMClient:
     def __init__(
         self, 
         provider: LLMProvider,
-        prompt_file_path: str = "prompts\prompt_version_3.txt",
+        prompt_file_path: str = "prompts/prompt_version_3.txt",
         max_retries: int = 3,
         retry_delay: float = 1.0
     ):
