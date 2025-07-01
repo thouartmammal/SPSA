@@ -53,7 +53,7 @@ class OpenAIProvider(LLMProvider):
                 response_format={"type": "json_object"}
             )
             logger.info(f"Sending prompt to LLM - Length: {len(prompt)} characters")
-            logger.debug(f"Full prompt sent to LLM:\n{prompt}")
+            logger.info(f"Full prompt sent to LLM:\n{prompt}")
             return response.choices[0].message.content.strip()
             
         except Exception as e:
@@ -86,7 +86,7 @@ class AnthropicProvider(LLMProvider):
                 ]
             )
             logger.info(f"Sending prompt to LLM - Length: {len(prompt)} characters")
-            logger.debug(f"Full prompt sent to LLM:\n{prompt}")
+            logger.info(f"Full prompt sent to LLM:\n{prompt}")
             return message.content[0].text.strip()
             
         except Exception as e:
@@ -121,7 +121,7 @@ class GroqProvider(LLMProvider):
                 response_format={"type": "json_object"}
             )
             logger.info(f"Sending prompt to LLM - Length: {len(prompt)} characters")
-            logger.debug(f"Full prompt sent to LLM:\n{prompt}")
+            logger.info(f"Full prompt sent to LLM:\n{prompt}")
             return chat_completion.choices[0].message.content.strip()
             
         except Exception as e:

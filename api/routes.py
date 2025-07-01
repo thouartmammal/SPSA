@@ -3,7 +3,7 @@ import logging
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Union, Literal
 
-from fastapi import APIRouter, HTTPException, status, Depends, Request, BackgroundTasks
+from fastapi import APIRouter, HTTPException, status, Depends, Request, BackgroundTasks, Body, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, validator
 
@@ -257,18 +257,104 @@ def get_request_id(request: Request) -> str:
     """Get request ID from request state"""
     return getattr(request.state, 'request_id', 'unknown')
 
-# CORRECTED Analysis endpoints
 @router.post(
     "/analyze/sentiment",
     response_model=SentimentAnalysisResponse,
-    summary="Analyze salesperson sentiment",
+    summary="Analyze salesperson sentiment", 
     description="Analyze salesperson sentiment and performance from deal activities",
     tags=["Analysis"]
 )
 async def analyze_sentiment(
-    request: AnalysisRequest,
     req: Request,
-    analyzer=Depends(get_sentiment_analyzer)
+    analyzer=Depends(get_sentiment_analyzer),
+    request: AnalysisRequest = Body(
+        example={
+            "deal_data": {
+                "deal_id": "deal_12345678",
+                "amount": 25000,
+                "dealstage": "Proposal",
+                "dealtype": "newbusiness",
+                "deal_stage_probability": 0.75,
+                "createdate": "2024-01-15T09:00:00Z", 
+                "closedate": None,
+                "activities": [
+                    {
+                        "sent_at": "2024-02-13T18:40:10.028Z",
+                        "from": None,
+                        "to": ["contact1@client-company.com", "contact2@client-company.com"],
+                        "subject": "Proposal Document for Review",
+                        "body": "Hi [Client Name], Great to speak with you yesterday. I've prepared the proposal document which I'm attaching here for your review. As discussed, I've included the optional extended support package and outlined the implementation timeline. Let me know if you have any questions about this document!",
+                        "state": "email",
+                        "direction": "outgoing",
+                        "activity_type": "email"
+                    },
+                    {
+                        "sent_at": "2024-02-15T14:30:42.690Z",
+                        "from": "decision-maker@client-company.com",
+                        "to": ["salesperson@your-company.com"],
+                        "subject": "RE: Proposal Document for Review",
+                        "body": "Hi [Salesperson], Thanks for sending this over so quickly. I have a few questions about the pricing structure and would like to discuss the implementation timeline. Can we schedule a call this week?",
+                        "state": "thread",
+                        "direction": "incoming",
+                        "activity_type": "email"
+                    },
+                    {
+                        "id": "call_001",
+                        "createdate": "2024-02-16T15:30:00Z",
+                        "call_title": "Proposal Discussion Call",
+                        "call_body": "Discussed proposal terms, pricing structure, and implementation timeline. Client had questions about ROI projections and integration requirements. Positive reception overall, they're moving forward with internal review process.",
+                        "call_direction": "outgoing",
+                        "call_duration": 45,
+                        "call_status": "completed",
+                        "activity_type": "call"
+                    },
+                    {
+                        "id": "meeting_001", 
+                        "meeting_title": "Account Strategy Planning Session",
+                        "internal_meeting_notes": "Internal team meeting to discuss account strategy and next steps. Reviewed client's current pain points, budget parameters, and decision timeline. Need to emphasize value proposition and provide additional case studies.",
+                        "meeting_location": "Conference Room A",
+                        "meeting_location_type": "office",
+                        "meeting_outcome": "action_items_defined",
+                        "meeting_start_time": "2024-02-14T14:00:00Z",
+                        "meeting_end_time": "2024-02-14T15:00:00Z",
+                        "activity_type": "meeting"
+                    },
+                    {
+                        "id": "note_001",
+                        "createdate": "2024-02-17T16:20:00Z",
+                        "lastmodifieddate": "2024-02-17T16:25:00Z",
+                        "note_body": "Client mentioned their procurement process requires additional approvals. Important to clarify timeline expectations and provide references from similar implementations. Decision maker prefers morning calls due to time zone differences.",
+                        "activity_type": "note"
+                    },
+                    {
+                        "id": "task_001",
+                        "createdate": "2024-02-16T20:47:18.511Z",
+                        "task_priority": "HIGH",
+                        "task_status": "COMPLETED",
+                        "task_type": "EMAIL",
+                        "task_subject": "Send Additional Case Studies",
+                        "task_body": "Client requested case studies from similar implementations. Need to send 2-3 relevant examples showing ROI and implementation success. Also need to clarify if pilot program option is available.",
+                        "activity_type": "task"
+                    },
+                    {
+                        "id": "task_002",
+                        "createdate": "2024-02-18T10:15:04.145Z",
+                        "task_priority": "MEDIUM",
+                        "task_status": "IN_PROGRESS",
+                        "task_type": "FOLLOW_UP",
+                        "task_subject": "Schedule Technical Demo",
+                        "task_body": "Client expressed interest in technical demonstration. Need to coordinate with product team and schedule demo for next week. Ensure technical requirements are documented beforehand.",
+                        "activity_type": "task"
+                    }
+                ]
+            },
+            "include_rag_context": True,
+            "analysis_options": {
+                "focus_area": "communication_effectiveness",
+                "include_benchmarking": True
+            }
+        }
+    )
 ):
     """Analyze salesperson sentiment from deal activities - RETURNS YOUR EXACT FORMAT"""
     

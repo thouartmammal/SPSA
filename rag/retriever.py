@@ -82,7 +82,8 @@ class RAGRetriever:
                 top_k=top_k * 2  # Get more results to filter
             )
             
-            logger.info(f"Raw results similarity scores: {[r.similarity_score for r in results]}")
+            # logger.info(f"Raw results similarity scores: {[r.similarity_score for r in results]}")
+            logger.info(f"Maxium similarity Found: {max([r.similarity_score for r in results])}")
             logger.info(f"Using similarity threshold: {min_similarity}")
 
             # Filter by similarity threshold

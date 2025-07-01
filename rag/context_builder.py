@@ -91,7 +91,7 @@ class RAGContextBuilder:
         for deal in deals:
             # Check for minimum data quality
             metadata = deal.metadata
-            print("🚩🚩🚩🚩🚩🚩", metadata)
+            # print("🚩🚩🚩🚩🚩🚩", metadata)
             
             # Must have basic activity data
             if metadata.get('activities_count', 0) < 2:

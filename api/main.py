@@ -78,7 +78,8 @@ async def initialize_services():
         
         # Initialize sentiment analyzer
         from llm.sentiment_analyzer import create_sentiment_analyzer
-        service_registry['sentiment_analyzer'] = create_sentiment_analyzer(provider_name=os.getenv('LLM_PROVIDER'), provider_config={'api_key': os.getenv('GROQ_API_KEY'), 'model': os.getenv('GROQ_MODEL')})
+        #service_registry['sentiment_analyzer'] = create_sentiment_analyzer(provider_name=os.getenv('LLM_PROVIDER'), provider_config={'api_key': os.getenv('GROQ_API_KEY'), 'model': os.getenv('GROQ_MODEL')})
+        service_registry['sentiment_analyzer'] = create_sentiment_analyzer(provider_name=os.getenv('LLM_PROVIDER'), provider_config={'api_key': os.getenv('AZURE_OPENAI_API_KEY'), 'endpoint': os.getenv('AZURE_OPENAI_ENDPOINT'), 'deployment_name': os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME'), 'api_version':os.getenv('AZURE_OPENAI_API_VERSION')})
         logger.info("Sentiment analyzer initialized")
         
         # Initialize RAG retriever
