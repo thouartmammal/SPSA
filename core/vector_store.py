@@ -35,8 +35,14 @@ class ChromaDBVectorStore(VectorStore):
         if not chromadb:
             raise ImportError("chromadb not installed. Run: pip install chromadb")
         
-        # Initialize ChromaDB client
-        self.client = chromadb.PersistentClient(path=settings.VECTOR_DB_PATH)
+        # Initialize ChromaDB client with telemetry disabled
+        self.client = chromadb.PersistentClient(
+            path=settings.VECTOR_DB_PATH,
+            settings=chromadb.Settings(
+                anonymized_telemetry=False,  # Disable telemetry
+                allow_reset=True
+            )
+        )
         self.collection_name = settings.CHROMADB_COLLECTION_NAME
         
         # Create or get collection

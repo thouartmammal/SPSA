@@ -133,10 +133,28 @@ class SearchRequest(BaseModel):
     include_metadata: bool = Field(True, description="Whether to include metadata")
 
 class KnowledgeBaseBuildRequest(BaseModel):
-    """Request to build knowledge base"""
-    data_sources: List[str] = Field(..., description="List of data file paths")
+    """Request model for knowledge base building"""
+    data_sources: Union[List[str], List[Dict[str, Any]]] = Field(
+        ..., 
+        description="Either file paths (strings) or direct deal data (objects)"
+    )
     rebuild: bool = Field(False, description="Whether to rebuild existing knowledge base")
-    batch_size: int = Field(50, description="Batch processing size")
+    batch_size: int = Field(50, description="Batch size for processing", ge=1, le=100)
+    
+    @validator('data_sources')
+    def validate_data_sources(cls, v):
+        if not v:
+            raise ValueError("data_sources cannot be empty")
+        
+        # Check if all elements are strings (file paths) or all are dicts (deal data)
+        if all(isinstance(item, str) for item in v):
+            return v  # File paths
+        elif all(isinstance(item, dict) for item in v):
+            return v  # Direct deal data
+        else:
+            raise ValueError("data_sources must be either all file paths (strings) or all deal data (objects)")
+        
+        return v
 
 # CORRECTED Response models matching your exact format
 class ActivityBreakdownItem(BaseModel):
@@ -207,6 +225,9 @@ class KnowledgeBaseBuildResponse(BaseModel):
     knowledge_base_statistics: Dict[str, Any]
     processing_statistics: Dict[str, Any]
     timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+
+
+
 
 # Dependency to get services from app state
 def get_services(request: Request):
@@ -691,11 +712,13 @@ async def analyze_sentiment(
 #             detail=f"Failed to get knowledge base status: {str(e)}"
 #         )
 
+
+
 @router.post(
     "/knowledge-base/build",
     response_model=KnowledgeBaseBuildResponse,
     summary="Build knowledge base",
-    description="Build or rebuild the knowledge base from data sources",
+    description="Build or rebuild the knowledge base from data sources or direct data",
     tags=["Knowledge Base"]
 )
 async def build_knowledge_base(
@@ -704,27 +727,50 @@ async def build_knowledge_base(
     background_tasks: BackgroundTasks,
     kb_manager=Depends(get_knowledge_base_manager)
 ):
-    """Build knowledge base from data sources"""
+    """Build knowledge base from data sources or direct deal data"""
     
     request_id = get_request_id(req)
-    logger.info(f"[{request_id}] Starting knowledge base build with {len(request.data_sources)} sources")
     
     try:
-        # Validate data sources exist
-        from pathlib import Path
-        for source in request.data_sources:
-            if not Path(source).exists():
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Data source not found: {source}"
-                )
-        
-        # Start build process
-        result = kb_manager.build_knowledge_base(
-            data_sources=request.data_sources,
-            rebuild=request.rebuild,
-            batch_size=request.batch_size
-        )
+        # Check if data_sources contains file paths or direct deal data
+        if request.data_sources and isinstance(request.data_sources[0], str):
+            # Handle file paths (original logic)
+            logger.info(f"[{request_id}] Starting knowledge base build with {len(request.data_sources)} file sources")
+            
+            # Validate data sources exist
+            from pathlib import Path
+            for source in request.data_sources:
+                if not Path(source).exists():
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Data source not found: {source}"
+                    )
+            
+            # Start build process with file paths
+            result = kb_manager.build_knowledge_base(
+                data_sources=request.data_sources,
+                rebuild=request.rebuild,
+                batch_size=request.batch_size
+            )
+            
+        else:
+            # Handle direct deal data
+            logger.info(f"[{request_id}] Starting knowledge base build with {len(request.data_sources)} direct deals")
+            
+            # Validate deal data structure
+            for i, deal in enumerate(request.data_sources):
+                if not isinstance(deal, dict):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Deal at index {i} is not a valid object"
+                    )
+            
+            # Start build process with direct data
+            result = kb_manager.build_knowledge_base_from_data(
+                deal_data=request.data_sources,
+                rebuild=request.rebuild,
+                batch_size=request.batch_size
+            )
         
         if result["success"]:
             logger.info(f"[{request_id}] Knowledge base build completed successfully")
@@ -744,7 +790,7 @@ async def build_knowledge_base(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Knowledge base build failed: {str(e)}"
         )
-
+    
 # # Utility endpoints (unchanged)
 # @router.get(
 #     "/deals/{deal_id}/insights",

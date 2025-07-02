@@ -168,6 +168,80 @@ class KnowledgeBaseManager:
                 'partial_results': processing_stats if 'processing_stats' in locals() else {}
             }
     
+    def build_knowledge_base_from_data(
+        self,
+        deal_data: List[Dict[str, Any]],
+        rebuild: bool = False,
+        batch_size: int = 50
+    ) -> Dict[str, Any]:
+        """
+        Build knowledge base from direct deal data
+        
+        Args:
+            deal_data: List of deal dictionaries
+            rebuild: Whether to rebuild existing knowledge base
+            batch_size: Processing batch size
+            
+        Returns:
+            Build result summary
+        """
+        
+        logger.info(f"Building knowledge base from {len(deal_data)} direct deals")
+        
+        try:
+            # Clear existing data if rebuilding
+            if rebuild:
+                logger.info("Rebuilding - clearing existing knowledge base")
+                self.vector_store.clear_all()  # You may need to implement this method
+            
+            # Process deals directly (no file reading needed)
+            processed_deals = []
+            
+            # Process in batches
+            for i in range(0, len(deal_data), batch_size):
+                batch = deal_data[i:i + batch_size]
+                logger.info(f"Processing batch {i//batch_size + 1}/{(len(deal_data)-1)//batch_size + 1}")
+                
+                for deal in batch:
+                    try:
+                        # Process individual deal
+                        processed_deal = self.data_processor.process_deal(deal)
+                        if processed_deal:
+                            processed_deals.append(processed_deal)
+                    except Exception as e:
+                        logger.warning(f"Failed to process deal {deal.get('deal_id', 'unknown')}: {e}")
+            
+            if not processed_deals:
+                return {
+                    'success': False,
+                    'error': 'No deals were processed successfully',
+                    'processed_deals': 0
+                }
+            
+            # Store in vector database
+            logger.info(f"Storing {len(processed_deals)} processed deals in vector database")
+            self.vector_store.store_patterns(processed_deals)
+            
+            # Update metadata
+            self.kb_metadata = self._generate_build_metadata(processed_deals, ["direct_data"])
+            
+            logger.info(f"Knowledge base build completed: {len(processed_deals)} deals processed")
+            
+            return {
+                'success': True,
+                'processed_deals': len(processed_deals),
+                'total_deals': len(deal_data),
+                'build_metadata': self.kb_metadata
+            }
+            
+        except Exception as e:
+            logger.error(f"Knowledge base build from data failed: {e}")
+            return {
+                'success': False,
+                'error': str(e),
+                'processed_deals': 0
+            }
+
     def update_knowledge_base(
         self,
         new_data_sources: List[str],
