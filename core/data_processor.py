@@ -517,244 +517,278 @@ class DealDataProcessor:
         logger.info(f"Successfully processed {len(processed_deals)} deals")
         return processed_deals
     # Additional helper functions to add to data_processor.py
-# These can be added to the DealDataProcessor class
 
-def _extract_activity_content_enhanced(self, activity: Dict[str, Any]) -> str:
-    """
-    Enhanced content extraction that handles the exact structure from your data
-    """
-    activity_type = activity.get('activity_type', '')
-    content_parts = []
-    
-    if activity_type == 'email':
-        # Handle email activities
-        if activity.get('subject'):
-            content_parts.append(f"Subject: {activity['subject']}")
-        if activity.get('body'):
-            body = activity['body'].strip()
-            if body and body != "No content":
-                content_parts.append(f"Body: {body}")
-        # Include direction and state info
-        if activity.get('direction'):
-            content_parts.append(f"Direction: {activity['direction']}")
-        if activity.get('state'):
-            content_parts.append(f"State: {activity['state']}")
+    def process_deals_batch(self, deals_batch: List[Dict[str, Any]], all_deals_data: List[Dict[str, Any]] = None) -> List[DealPattern]:
+        """
+        Process a batch of deals and create embeddings
+        
+        Args:
+            deals_batch: List of deal dictionaries to process
+            all_deals_data: Complete dataset for relative categorization (optional)
             
-    elif activity_type == 'call':
-        # Handle call activities
-        if activity.get('call_title'):
-            content_parts.append(f"Call: {activity['call_title']}")
-        if activity.get('call_body'):
-            body = activity['call_body'].strip()
-            if body:
-                content_parts.append(f"Notes: {body}")
-        if activity.get('call_direction'):
-            content_parts.append(f"Direction: {activity['call_direction']}")
-        if activity.get('call_status'):
-            content_parts.append(f"Status: {activity['call_status']}")
-        if activity.get('call_duration'):
-            content_parts.append(f"Duration: {activity['call_duration']} minutes")
-            
-    elif activity_type == 'meeting':
-        # Handle meeting activities
-        if activity.get('meeting_title'):
-            content_parts.append(f"Meeting: {activity['meeting_title']}")
-        if activity.get('internal_meeting_notes'):
-            notes = activity['internal_meeting_notes'].strip()
-            if notes:
-                content_parts.append(f"Notes: {notes}")
-        if activity.get('meeting_location'):
-            content_parts.append(f"Location: {activity['meeting_location']}")
-        if activity.get('meeting_outcome'):
-            content_parts.append(f"Outcome: {activity['meeting_outcome']}")
-            
-    elif activity_type == 'note':
-        # Handle note activities
-        if activity.get('note_body'):
-            body = activity['note_body'].strip()
-            if body:
-                content_parts.append(f"Note: {body}")
+        Returns:
+            List of processed DealPattern objects
+        """
+        
+        processed_deals = []
+        
+        logger.info(f"Processing batch of {len(deals_batch)} deals...")
+        
+        for deal_data in deals_batch:
+            try:
+                # Process deal with all deals data for relative categorization
+                deal_pattern = self.process_deal(deal_data, all_deals_data)
                 
-    elif activity_type == 'task':
-        # Handle task activities
-        if activity.get('task_subject'):
-            content_parts.append(f"Task: {activity['task_subject']}")
-        if activity.get('task_body'):
-            body = activity['task_body'].strip()
-            if body:
-                content_parts.append(f"Details: {body}")
-        if activity.get('task_status'):
-            content_parts.append(f"Status: {activity['task_status']}")
-        if activity.get('task_priority'):
-            content_parts.append(f"Priority: {activity['task_priority']}")
-    
-    return " | ".join(content_parts) if content_parts else ""
-
-def _get_activity_timestamp_enhanced(self, activity: Dict[str, Any]) -> Optional[datetime]:
-    """
-    Enhanced timestamp extraction for your exact data structure
-    """
-    activity_type = activity.get('activity_type', '')
-    timestamp_field = None
-    
-    # Map activity types to their timestamp fields
-    timestamp_mapping = {
-        'email': 'sent_at',
-        'call': 'createdate',
-        'meeting': 'meeting_start_time',
-        'note': 'lastmodifieddate',  # Use lastmodifieddate for notes, fallback to createdate
-        'task': 'createdate'
-    }
-    
-    timestamp_field = timestamp_mapping.get(activity_type)
-    
-    # For notes, try lastmodifieddate first, then createdate
-    if activity_type == 'note':
-        timestamp_value = activity.get('lastmodifieddate') or activity.get('createdate')
-    else:
-        timestamp_value = activity.get(timestamp_field)
-    
-    if timestamp_value:
-        try:
-            # Handle different timestamp formats
-            if isinstance(timestamp_value, str):
-                if timestamp_value.endswith('Z'):
-                    return datetime.fromisoformat(timestamp_value.replace('Z', '+00:00'))
-                else:
-                    return datetime.fromisoformat(timestamp_value)
-        except Exception as e:
-            logger.warning(f"Could not parse timestamp '{timestamp_value}' for activity type '{activity_type}': {e}")
-    
-    return None
-
-def _create_activity_metadata_enhanced(self, activity: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Create enhanced metadata for activities based on your data structure
-    """
-    activity_type = activity.get('activity_type', '')
-    metadata = {
-        'activity_id': activity.get('id'),
-        'raw_activity': activity  # Keep original for reference
-    }
-    
-    if activity_type == 'email':
-        metadata.update({
-            'direction': activity.get('direction'),
-            'state': activity.get('state'),
-            'from_email': activity.get('from'),
-            'to_emails': activity.get('to', []),
-            'has_subject': bool(activity.get('subject')),
-            'has_body': bool(activity.get('body'))
-        })
+                # Create embedding using the injected service
+                logger.debug(f"Creating embedding for deal {deal_pattern.deal_id}")
+                deal_pattern.embedding = self.embedding_service.encode(deal_pattern.combined_text)
+                
+                processed_deals.append(deal_pattern)
+                logger.debug(f"Successfully processed deal {deal_pattern.deal_id}")
+                
+            except Exception as e:
+                logger.warning(f"Error processing deal {deal_data.get('deal_id', 'unknown')}: {e}")
+                continue
         
-    elif activity_type == 'call':
-        metadata.update({
-            'call_direction': activity.get('call_direction'),
-            'call_status': activity.get('call_status'),
-            'call_duration': activity.get('call_duration'),
-            'has_title': bool(activity.get('call_title')),
-            'has_notes': bool(activity.get('call_body'))
-        })
-        
-    elif activity_type == 'meeting':
-        metadata.update({
-            'meeting_outcome': activity.get('meeting_outcome'),
-            'meeting_location': activity.get('meeting_location'),
-            'meeting_location_type': activity.get('meeting_location_type'),
-            'has_title': bool(activity.get('meeting_title')),
-            'has_notes': bool(activity.get('internal_meeting_notes')),
-            'has_start_time': bool(activity.get('meeting_start_time')),
-            'has_end_time': bool(activity.get('meeting_end_time'))
-        })
-        
-    elif activity_type == 'note':
-        metadata.update({
-            'has_body': bool(activity.get('note_body')),
-            'last_modified': activity.get('lastmodifieddate'),
-            'created': activity.get('createdate')
-        })
-        
-    elif activity_type == 'task':
-        metadata.update({
-            'task_status': activity.get('task_status'),
-            'task_priority': activity.get('task_priority'),
-            'task_type': activity.get('task_type'),
-            'has_subject': bool(activity.get('task_subject')),
-            'has_body': bool(activity.get('task_body'))
-        })
-    
-    return metadata
+        logger.info(f"Successfully processed {len(processed_deals)} out of {len(deals_batch)} deals in batch")
+        return processed_deals
 
-def validate_activity_structure(self, activity: Dict[str, Any]) -> Tuple[bool, List[str]]:
-    """
-    Validate activity structure matches expected format
-    """
-    errors = []
-    
-    # Check required fields
-    if 'activity_type' not in activity:
-        errors.append("Missing required field: activity_type")
-        return False, errors
-    
-    activity_type = activity['activity_type']
-    
-    # Validate activity type
-    valid_types = ['email', 'call', 'meeting', 'note', 'task']
-    if activity_type not in valid_types:
-        errors.append(f"Invalid activity_type: {activity_type}")
-    
-    # Type-specific validation
-    if activity_type == 'email':
-        if not any([activity.get('subject'), activity.get('body')]):
-            errors.append("Email activity must have either subject or body")
-            
-    elif activity_type == 'call':
-        if not any([activity.get('call_title'), activity.get('call_body')]):
-            errors.append("Call activity must have either call_title or call_body")
-            
-    elif activity_type == 'meeting':
-        if not activity.get('meeting_title'):
-            errors.append("Meeting activity must have meeting_title")
-            
-    elif activity_type == 'note':
-        if not activity.get('note_body'):
-            errors.append("Note activity must have note_body")
-            
-    elif activity_type == 'task':
-        if not activity.get('task_subject'):
-            errors.append("Task activity must have task_subject")
-    
-    return len(errors) == 0, errors
+    def _extract_activity_content_enhanced(self, activity: Dict[str, Any]) -> str:
+        """
+        Enhanced content extraction that handles the exact structure from your data
+        """
+        activity_type = activity.get('activity_type', '')
+        content_parts = []
+        
+        if activity_type == 'email':
+            # Handle email activities
+            if activity.get('subject'):
+                content_parts.append(f"Subject: {activity['subject']}")
+            if activity.get('body'):
+                body = activity['body'].strip()
+                if body and body != "No content":
+                    content_parts.append(f"Body: {body}")
+            # Include direction and state info
+            if activity.get('direction'):
+                content_parts.append(f"Direction: {activity['direction']}")
+            if activity.get('state'):
+                content_parts.append(f"State: {activity['state']}")
+                
+        elif activity_type == 'call':
+            # Handle call activities
+            if activity.get('call_title'):
+                content_parts.append(f"Call: {activity['call_title']}")
+            if activity.get('call_body'):
+                body = activity['call_body'].strip()
+                if body:
+                    content_parts.append(f"Notes: {body}")
+            if activity.get('call_direction'):
+                content_parts.append(f"Direction: {activity['call_direction']}")
+            if activity.get('call_status'):
+                content_parts.append(f"Status: {activity['call_status']}")
+            if activity.get('call_duration'):
+                content_parts.append(f"Duration: {activity['call_duration']} minutes")
+                
+        elif activity_type == 'meeting':
+            # Handle meeting activities
+            if activity.get('meeting_title'):
+                content_parts.append(f"Meeting: {activity['meeting_title']}")
+            if activity.get('internal_meeting_notes'):
+                notes = activity['internal_meeting_notes'].strip()
+                if notes:
+                    content_parts.append(f"Notes: {notes}")
+            if activity.get('meeting_location'):
+                content_parts.append(f"Location: {activity['meeting_location']}")
+            if activity.get('meeting_outcome'):
+                content_parts.append(f"Outcome: {activity['meeting_outcome']}")
+                
+        elif activity_type == 'note':
+            # Handle note activities
+            if activity.get('note_body'):
+                body = activity['note_body'].strip()
+                if body:
+                    content_parts.append(f"Note: {body}")
+                    
+        elif activity_type == 'task':
+            # Handle task activities
+            if activity.get('task_subject'):
+                content_parts.append(f"Task: {activity['task_subject']}")
+            if activity.get('task_body'):
+                body = activity['task_body'].strip()
+                if body:
+                    content_parts.append(f"Details: {body}")
+            if activity.get('task_status'):
+                content_parts.append(f"Status: {activity['task_status']}")
+            if activity.get('task_priority'):
+                content_parts.append(f"Priority: {activity['task_priority']}")
+        
+        return " | ".join(content_parts) if content_parts else ""
 
-# Usage example - these methods would be added to the DealDataProcessor class
-# and used in the parse_activity method like this:
+    def _get_activity_timestamp_enhanced(self, activity: Dict[str, Any]) -> Optional[datetime]:
+        """
+        Enhanced timestamp extraction for your exact data structure
+        """
+        activity_type = activity.get('activity_type', '')
+        timestamp_field = None
+        
+        # Map activity types to their timestamp fields
+        timestamp_mapping = {
+            'email': 'sent_at',
+            'call': 'createdate',
+            'meeting': 'meeting_start_time',
+            'note': 'lastmodifieddate',  # Use lastmodifieddate for notes, fallback to createdate
+            'task': 'createdate'
+        }
+        
+        timestamp_field = timestamp_mapping.get(activity_type)
+        
+        # For notes, try lastmodifieddate first, then createdate
+        if activity_type == 'note':
+            timestamp_value = activity.get('lastmodifieddate') or activity.get('createdate')
+        else:
+            timestamp_value = activity.get(timestamp_field)
+        
+        if timestamp_value:
+            try:
+                # Handle different timestamp formats
+                if isinstance(timestamp_value, str):
+                    if timestamp_value.endswith('Z'):
+                        return datetime.fromisoformat(timestamp_value.replace('Z', '+00:00'))
+                    else:
+                        return datetime.fromisoformat(timestamp_value)
+            except Exception as e:
+                logger.warning(f"Could not parse timestamp '{timestamp_value}' for activity type '{activity_type}': {e}")
+        
+        return None
 
-def parse_activity_enhanced(self, activity: Dict[str, Any], deal_id: str) -> ProcessedActivity:
-    """Enhanced activity parsing using the new helper methods"""
-    
-    # Validate activity structure first
-    is_valid, validation_errors = self.validate_activity_structure(activity)
-    if not is_valid:
-        logger.warning(f"Activity validation failed for deal {deal_id}: {validation_errors}")
-        # Could choose to skip invalid activities or create a minimal version
-    
-    # Extract content using enhanced method
-    content = self._extract_activity_content_enhanced(activity)
-    
-    # Get timestamp using enhanced method
-    timestamp = self._get_activity_timestamp_enhanced(activity)
-    
-    # Create enhanced metadata
-    metadata = self._create_activity_metadata_enhanced(activity)
-    
-    return ProcessedActivity(
-        deal_id=deal_id,
-        activity_type=activity['activity_type'],
-        timestamp=timestamp,
-        content=content,
-        direction=activity.get('direction'),
-        metadata=metadata
-    )
+    def _create_activity_metadata_enhanced(self, activity: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create enhanced metadata for activities based on your data structure
+        """
+        activity_type = activity.get('activity_type', '')
+        metadata = {
+            'activity_id': activity.get('id'),
+            'raw_activity': activity  # Keep original for reference
+        }
+        
+        if activity_type == 'email':
+            metadata.update({
+                'direction': activity.get('direction'),
+                'state': activity.get('state'),
+                'from_email': activity.get('from'),
+                'to_emails': activity.get('to', []),
+                'has_subject': bool(activity.get('subject')),
+                'has_body': bool(activity.get('body'))
+            })
+            
+        elif activity_type == 'call':
+            metadata.update({
+                'call_direction': activity.get('call_direction'),
+                'call_status': activity.get('call_status'),
+                'call_duration': activity.get('call_duration'),
+                'has_title': bool(activity.get('call_title')),
+                'has_notes': bool(activity.get('call_body'))
+            })
+            
+        elif activity_type == 'meeting':
+            metadata.update({
+                'meeting_outcome': activity.get('meeting_outcome'),
+                'meeting_location': activity.get('meeting_location'),
+                'meeting_location_type': activity.get('meeting_location_type'),
+                'has_title': bool(activity.get('meeting_title')),
+                'has_notes': bool(activity.get('internal_meeting_notes')),
+                'has_start_time': bool(activity.get('meeting_start_time')),
+                'has_end_time': bool(activity.get('meeting_end_time'))
+            })
+            
+        elif activity_type == 'note':
+            metadata.update({
+                'has_body': bool(activity.get('note_body')),
+                'last_modified': activity.get('lastmodifieddate'),
+                'created': activity.get('createdate')
+            })
+            
+        elif activity_type == 'task':
+            metadata.update({
+                'task_status': activity.get('task_status'),
+                'task_priority': activity.get('task_priority'),
+                'task_type': activity.get('task_type'),
+                'has_subject': bool(activity.get('task_subject')),
+                'has_body': bool(activity.get('task_body'))
+            })
+        
+        return metadata
+
+    def validate_activity_structure(self, activity: Dict[str, Any]) -> Tuple[bool, List[str]]:
+        """
+        Validate activity structure matches expected format
+        """
+        errors = []
+        
+        # Check required fields
+        if 'activity_type' not in activity:
+            errors.append("Missing required field: activity_type")
+            return False, errors
+        
+        activity_type = activity['activity_type']
+        
+        # Validate activity type
+        valid_types = ['email', 'call', 'meeting', 'note', 'task']
+        if activity_type not in valid_types:
+            errors.append(f"Invalid activity_type: {activity_type}")
+        
+        # Type-specific validation
+        if activity_type == 'email':
+            if not any([activity.get('subject'), activity.get('body')]):
+                errors.append("Email activity must have either subject or body")
+                
+        elif activity_type == 'call':
+            if not any([activity.get('call_title'), activity.get('call_body')]):
+                errors.append("Call activity must have either call_title or call_body")
+                
+        elif activity_type == 'meeting':
+            if not activity.get('meeting_title'):
+                errors.append("Meeting activity must have meeting_title")
+                
+        elif activity_type == 'note':
+            if not activity.get('note_body'):
+                errors.append("Note activity must have note_body")
+                
+        elif activity_type == 'task':
+            if not activity.get('task_subject'):
+                errors.append("Task activity must have task_subject")
+        
+        return len(errors) == 0, errors
+
+    # Usage example - these methods would be added to the DealDataProcessor class
+    # and used in the parse_activity method like this:
+
+    def parse_activity_enhanced(self, activity: Dict[str, Any], deal_id: str) -> ProcessedActivity:
+        """Enhanced activity parsing using the new helper methods"""
+        
+        # Validate activity structure first
+        is_valid, validation_errors = self.validate_activity_structure(activity)
+        if not is_valid:
+            logger.warning(f"Activity validation failed for deal {deal_id}: {validation_errors}")
+            # Could choose to skip invalid activities or create a minimal version
+        
+        # Extract content using enhanced method
+        content = self._extract_activity_content_enhanced(activity)
+        
+        # Get timestamp using enhanced method
+        timestamp = self._get_activity_timestamp_enhanced(activity)
+        
+        # Create enhanced metadata
+        metadata = self._create_activity_metadata_enhanced(activity)
+        
+        return ProcessedActivity(
+            deal_id=deal_id,
+            activity_type=activity['activity_type'],
+            timestamp=timestamp,
+            content=content,
+            direction=activity.get('direction'),
+            metadata=metadata
+        )
 
 
 # Example usage and testing

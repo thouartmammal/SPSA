@@ -183,64 +183,124 @@ class KnowledgeBaseManager:
             batch_size: Processing batch size
             
         Returns:
-            Build result summary
+            Build result summary (same format as build_knowledge_base)
         """
         
         logger.info(f"Building knowledge base from {len(deal_data)} direct deals")
+        build_start_time = datetime.utcnow()
         
         try:
-            # Clear existing data if rebuilding
+            # Clear existing knowledge base if rebuilding
             if rebuild:
-                logger.info("Rebuilding - clearing existing knowledge base")
-                self.vector_store.clear_all()  # You may need to implement this method
+                logger.info("Clearing existing knowledge base for rebuild")
+                self._clear_knowledge_base()
             
-            # Process deals directly (no file reading needed)
-            processed_deals = []
-            
-            # Process in batches
-            for i in range(0, len(deal_data), batch_size):
-                batch = deal_data[i:i + batch_size]
-                logger.info(f"Processing batch {i//batch_size + 1}/{(len(deal_data)-1)//batch_size + 1}")
-                
-                for deal in batch:
-                    try:
-                        # Process individual deal
-                        processed_deal = self.data_processor.process_deal(deal)
-                        if processed_deal:
-                            processed_deals.append(processed_deal)
-                    except Exception as e:
-                        logger.warning(f"Failed to process deal {deal.get('deal_id', 'unknown')}: {e}")
-            
-            if not processed_deals:
-                return {
-                    'success': False,
-                    'error': 'No deals were processed successfully',
-                    'processed_deals': 0
-                }
-            
-            # Store in vector database
-            logger.info(f"Storing {len(processed_deals)} processed deals in vector database")
-            self.vector_store.store_patterns(processed_deals)
-            
-            # Update metadata
-            self.kb_metadata = self._generate_build_metadata(processed_deals, ["direct_data"])
-            
-            logger.info(f"Knowledge base build completed: {len(processed_deals)} deals processed")
-            
-            return {
-                'success': True,
-                'processed_deals': len(processed_deals),
-                'total_deals': len(deal_data),
-                'build_metadata': self.kb_metadata
+            # Process the direct data (simulate what _process_data_source does but without file reading)
+            processing_stats = {
+                'total_files': 1,  # Treating direct data as one "source"
+                'successful_files': 0,
+                'failed_files': 0,
+                'total_deals_processed': 0,
+                'processing_errors': [],
+                'file_statistics': {}
             }
             
+            try:
+                logger.info(f"Processing direct deal data")
+                
+                # Simulate _process_data_source but with direct data
+                processed_deals, file_stats = self._process_direct_deal_data(deal_data, batch_size)
+                
+                processing_stats['successful_files'] += 1
+                processing_stats['total_deals_processed'] += len(processed_deals)
+                processing_stats['file_statistics']['direct_data'] = file_stats
+                
+                logger.info(f"Successfully processed {len(processed_deals)} deals from direct data")
+                
+            except Exception as e:
+                logger.error(f"Error processing direct deal data: {e}")
+                processing_stats['failed_files'] += 1
+                processing_stats['processing_errors'].append({
+                    'file': 'direct_data',
+                    'error': str(e),
+                    'timestamp': datetime.utcnow().isoformat()
+                })
+                processed_deals = []
+            
+            if not processed_deals:
+                raise ValueError("No deals were successfully processed")
+            
+            # Store processed deals in vector database (same as original)
+            logger.info(f"Storing {len(processed_deals)} deals in vector database")
+            self.vector_store.store_patterns(processed_deals)
+            
+            # Update knowledge base metadata (same as original)
+            self._update_kb_metadata(['direct_data'], processed_deals, processing_stats)
+            
+            # Cache knowledge base statistics (same as original)
+            kb_stats = self._generate_kb_statistics(processed_deals)
+            self.cache_manager.set("kb_statistics", kb_stats, ttl=3600)
+            
+            build_duration = (datetime.utcnow() - build_start_time).total_seconds()
+            
+            # Prepare build results (same format as original)
+            build_results = {
+                'success': True,
+                'build_duration_seconds': build_duration,
+                'total_deals_processed': len(processed_deals),
+                'knowledge_base_statistics': kb_stats,
+                'processing_statistics': processing_stats,
+                'metadata': self.kb_metadata
+            }
+            
+            logger.info(f"Knowledge base build completed successfully in {build_duration:.2f} seconds")
+            return build_results
+            
         except Exception as e:
-            logger.error(f"Knowledge base build from data failed: {e}")
+            logger.error(f"Knowledge base build failed: {e}")
             return {
                 'success': False,
                 'error': str(e),
-                'processed_deals': 0
+                'build_duration_seconds': (datetime.utcnow() - build_start_time).total_seconds(),
+                'partial_results': processing_stats if 'processing_stats' in locals() else {}
             }
+
+    def _process_direct_deal_data(
+        self,
+        deal_data: List[Dict[str, Any]], 
+        batch_size: int
+    ) -> Tuple[List[Any], Dict[str, Any]]:
+        """
+        Process direct deal data (similar to _process_data_source but without file reading)
+        
+        Args:
+            deal_data: List of deal dictionaries
+            batch_size: Processing batch size
+            
+        Returns:
+            Tuple of (processed_deals, file_statistics)
+        """
+        
+        processed_deals = []
+        file_stats = {
+            'total_deals': len(deal_data),
+            'processed_deals': 0,
+            'failed_deals': 0,
+            'processing_errors': []
+        }
+        
+        # Process in batches (same pattern as your original)
+        for i in range(0, len(deal_data), batch_size):
+            batch = deal_data[i:i + batch_size]
+            logger.info(f"Processing batch {i//batch_size + 1}/{(len(deal_data)-1)//batch_size + 1}")
+            
+            batch_deals = self.data_processor.process_deals_batch(batch)  # Use your existing batch method
+            processed_deals.extend(batch_deals)
+            
+            file_stats['processed_deals'] += len(batch_deals)
+            file_stats['failed_deals'] += len(batch) - len(batch_deals)
+        
+        return processed_deals, file_stats
 
     def update_knowledge_base(
         self,
