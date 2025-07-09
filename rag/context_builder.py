@@ -1,533 +1,423 @@
 import logging
-from typing import List, Dict, Any, Optional, Tuple
+from typing import Dict, Any, List, Optional
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from datetime import datetime
-import statistics
-from collections import defaultdict
 
-import sys
-from pathlib import Path
-
-# Add project root to Python path
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
-
-from models.schemas import VectorSearchResult
-
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
-class RAGContextBuilder:
-    """Build intelligent context from similar historical deals for LLM analysis"""
+@dataclass
+class DealContext:
+    """Container for deal context information"""
+    deal_id: str
+    activities: List[Dict[str, Any]]
+    metadata: Dict[str, Any]
+    similar_deals: List[Dict[str, Any]] = None
     
-    def __init__(self):
-        self.min_sample_size = 2  # Minimum deals needed for reliable patterns
-        logger.info("RAG Context Builder initialized")
+class ContextComponent(ABC):
+    """Abstract base class for context components"""
     
-    def build_context(
-        self, 
-        similar_deals: List[VectorSearchResult], 
-        current_deal_metadata: Dict[str, Any],
-        max_context_length: int = 2000
-    ) -> str:
-        """
-        Build comprehensive context from similar deals for LLM analysis
-        
-        Args:
-            similar_deals: List of similar deals from vector search
-            current_deal_metadata: Metadata of current deal being analyzed
-            max_context_length: Maximum length of context string
-            
-        Returns:
-            Structured context string for LLM prompt
-        """
-        
-        if not similar_deals:
-            return self._create_no_context_message()
-        
-        # Filter and prepare deals for analysis
-        filtered_deals = self._filter_quality_deals(similar_deals)
-        
-        if len(filtered_deals) < self.min_sample_size:
-            return self._create_insufficient_context_message(len(filtered_deals))
-        
-        # Group deals by outcome
-        deal_groups = self._group_by_outcome(filtered_deals)
-        
-        # Extract patterns from each group
-        success_patterns = self._extract_success_patterns(deal_groups.get('won', []))
-        failure_patterns = self._extract_failure_patterns(deal_groups.get('lost', []))
-        open_patterns = self._extract_open_patterns(deal_groups.get('open', []))
-        
-        # Generate performance benchmarks
-        benchmarks = self._generate_benchmarks(filtered_deals)
-        
-        # Create deal characteristics context
-        characteristics_context = self._create_characteristics_context(
-            current_deal_metadata, filtered_deals
-        )
-        
-        # Format final context
-        context = self._format_context(
-            characteristics_context=characteristics_context,
-            success_patterns=success_patterns,
-            failure_patterns=failure_patterns,
-            open_patterns=open_patterns,
-            benchmarks=benchmarks,
-            total_similar_deals=len(filtered_deals),
-            similarity_scores=[deal.similarity_score for deal in filtered_deals]
-        )
-        
-        # Truncate if too long
-        if len(context) > max_context_length:
-            context = context[:max_context_length] + "\n[Context truncated for length]"
-        
-        logger.info(f"Built context from {len(filtered_deals)} similar deals")
-        return context
+    @abstractmethod
+    def build_context(self, deal_context: DealContext) -> str:
+        """Build context section for this component"""
+        pass
     
-    def _filter_quality_deals(self, deals: List[VectorSearchResult]) -> List[VectorSearchResult]:
-        """Filter deals to ensure quality data for pattern analysis"""
-        quality_deals = []
-        
-        for deal in deals:
-            # Check for minimum data quality
-            metadata = deal.metadata
-            # print("🚩🚩🚩🚩🚩🚩", metadata)
-            
-            # Must have basic activity data
-            if metadata.get('activities_count', 0) < 2:
-                continue
-                
-            # Must have clear outcome or be open
-            if not metadata.get('deal_outcome'):
-                continue
-                
-            # # Must have reasonable similarity score (> 0.3)
-            # if deal.similarity_score < 0.3:
-            #     continue
-                
-            quality_deals.append(deal)
-        
-        logger.debug(f"Filtered {len(deals)} deals to {len(quality_deals)} quality deals")
-        return quality_deals
+    @abstractmethod
+    def get_component_name(self) -> str:
+        """Get component name for logging"""
+        pass
     
-    def _group_by_outcome(self, deals: List[VectorSearchResult]) -> Dict[str, List[VectorSearchResult]]:
-        """Group deals by their outcomes (won/lost/open)"""
-        groups = defaultdict(list)
-        
-        for deal in deals:
-            outcome = deal.metadata.get('deal_outcome', 'unknown')
-            groups[outcome].append(deal)
-        
-        return dict(groups)
+    @property
+    @abstractmethod
+    def is_enabled(self) -> bool:
+        """Check if component is enabled in settings"""
+        pass
+
+class SimilarDealsContext(ContextComponent):
+    """Context component for similar deals"""
     
-    def _extract_success_patterns(self, won_deals: List[VectorSearchResult]) -> Dict[str, Any]:
-        """Extract patterns from successful deals"""
-        if len(won_deals) < self.min_sample_size:
-            return {'insufficient_data': True, 'count': len(won_deals)}
+    def build_context(self, deal_context: DealContext) -> str:
+        """Build similar deals context"""
+        if not deal_context.similar_deals:
+            return ""
         
-        # Extract key metrics
-        response_times = []
-        activity_counts = []
-        communication_gaps = []
-        business_hours_ratios = []
-        deal_ages = []
+        context_parts = ["## SIMILAR DEALS CONTEXT"]
         
-        for deal in won_deals:
-            metadata = deal.metadata
+        for i, similar_deal in enumerate(deal_context.similar_deals[:3], 1):
+            deal_id = similar_deal.get('deal_id', f'Deal_{i}')
+            outcome = similar_deal.get('metadata', {}).get('outcome', 'unknown')
+            sentiment = similar_deal.get('metadata', {}).get('sentiment', 'neutral')
             
-            # Response time metrics
-            response_time = metadata.get('response_time_metrics', {}).get('avg_response_time_hours', 0)
-            if response_time > 0:
-                response_times.append(response_time)
+            context_parts.append(f"### Similar Deal {i} (ID: {deal_id})")
+            context_parts.append(f"- **Outcome**: {outcome}")
+            context_parts.append(f"- **Sentiment**: {sentiment}")
             
-            # Activity patterns
-            activity_count = metadata.get('activities_count', 0)
-            if activity_count > 0:
-                activity_counts.append(activity_count)
-            
-            # Communication gaps
-            gaps = metadata.get('communication_gaps_count', 0)
-            communication_gaps.append(gaps)
-            
-            # Business hours activity
-            bh_ratio = metadata.get('business_hours_ratio', 0)
-            if bh_ratio > 0:
-                business_hours_ratios.append(bh_ratio)
-            
-            # Deal lifecycle
-            age = metadata.get('deal_age_days', 0)
-            if age > 0:
-                deal_ages.append(age)
-        
-        return {
-            'count': len(won_deals),
-            'avg_response_time': statistics.mean(response_times) if response_times else 0,
-            'avg_activity_count': statistics.mean(activity_counts) if activity_counts else 0,
-            'avg_communication_gaps': statistics.mean(communication_gaps),
-            'avg_business_hours_ratio': statistics.mean(business_hours_ratios) if business_hours_ratios else 0,
-            'avg_deal_age': statistics.mean(deal_ages) if deal_ages else 0,
-            'response_time_range': (min(response_times), max(response_times)) if len(response_times) > 1 else None,
-            'common_characteristics': self._extract_common_characteristics(won_deals)
-        }
-    
-    def _extract_failure_patterns(self, lost_deals: List[VectorSearchResult]) -> Dict[str, Any]:
-        """Extract patterns from failed deals"""
-        if len(lost_deals) < self.min_sample_size:
-            return {'insufficient_data': True, 'count': len(lost_deals)}
-        
-        # Extract key failure indicators
-        response_times = []
-        activity_counts = []
-        communication_gaps = []
-        business_hours_ratios = []
-        deal_ages = []
-        
-        for deal in lost_deals:
-            metadata = deal.metadata
-            
-            # Response time metrics  
-            response_time = metadata.get('response_time_metrics', {}).get('avg_response_time_hours', 0)
-            if response_time > 0:
-                response_times.append(response_time)
-            
-            # Activity patterns
-            activity_count = metadata.get('activities_count', 0)
-            if activity_count > 0:
-                activity_counts.append(activity_count)
-            
-            # Communication gaps (key failure indicator)
-            gaps = metadata.get('communication_gaps_count', 0)
-            communication_gaps.append(gaps)
-            
-            # Business hours activity
-            bh_ratio = metadata.get('business_hours_ratio', 0)
-            if bh_ratio > 0:
-                business_hours_ratios.append(bh_ratio)
-            
-            # Deal lifecycle
-            age = metadata.get('deal_age_days', 0)
-            if age > 0:
-                deal_ages.append(age)
-        
-        return {
-            'count': len(lost_deals),
-            'avg_response_time': statistics.mean(response_times) if response_times else 0,
-            'avg_activity_count': statistics.mean(activity_counts) if activity_counts else 0,
-            'avg_communication_gaps': statistics.mean(communication_gaps),
-            'avg_business_hours_ratio': statistics.mean(business_hours_ratios) if business_hours_ratios else 0,
-            'avg_deal_age': statistics.mean(deal_ages) if deal_ages else 0,
-            'response_time_range': (min(response_times), max(response_times)) if len(response_times) > 1 else None,
-            'common_warning_signs': self._extract_warning_signs(lost_deals)
-        }
-    
-    def _extract_open_patterns(self, open_deals: List[VectorSearchResult]) -> Dict[str, Any]:
-        """Extract patterns from currently open deals"""
-        if not open_deals:
-            return {'count': 0}
-        
-        activity_counts = []
-        communication_gaps = []
-        probabilities = []
-        
-        for deal in open_deals:
-            metadata = deal.metadata
-            
-            activity_count = metadata.get('activities_count', 0)
-            if activity_count > 0:
-                activity_counts.append(activity_count)
-            
-            gaps = metadata.get('communication_gaps_count', 0)
-            communication_gaps.append(gaps)
-            
-            prob = metadata.get('deal_probability', 0)
-            if prob > 0:
-                probabilities.append(prob)
-        
-        return {
-            'count': len(open_deals),
-            'avg_activity_count': statistics.mean(activity_counts) if activity_counts else 0,
-            'avg_communication_gaps': statistics.mean(communication_gaps),
-            'avg_probability': statistics.mean(probabilities) if probabilities else 0
-        }
-    
-    def _extract_common_characteristics(self, deals: List[VectorSearchResult]) -> Dict[str, Any]:
-        """Extract common characteristics from a group of deals"""
-        deal_types = []
-        deal_sizes = []
-        industries = []
-        
-        for deal in deals:
-            metadata = deal.metadata
-            
-            deal_type = metadata.get('deal_type', '')
-            if deal_type:
-                deal_types.append(deal_type)
-            
-            deal_size = metadata.get('deal_size_category', '')
-            if deal_size:
-                deal_sizes.append(deal_size)
-        
-        return {
-            'most_common_deal_type': max(set(deal_types), key=deal_types.count) if deal_types else None,
-            'most_common_deal_size': max(set(deal_sizes), key=deal_sizes.count) if deal_sizes else None
-        }
-    
-    def _extract_warning_signs(self, lost_deals: List[VectorSearchResult]) -> List[str]:
-        """Extract specific warning signs from lost deals"""
-        warning_signs = []
-        
-        high_gap_count = sum(1 for deal in lost_deals 
-                           if deal.metadata.get('communication_gaps_count', 0) > 2)
-        
-        if high_gap_count / len(lost_deals) > 0.5:
-            warning_signs.append("Multiple communication gaps (>2)")
-        
-        slow_response_count = sum(1 for deal in lost_deals 
-                                if deal.metadata.get('response_time_metrics', {}).get('avg_response_time_hours', 0) > 24)
-        
-        if slow_response_count / len(lost_deals) > 0.5:
-            warning_signs.append("Slow response times (>24 hours)")
-        
-        declining_trend_count = sum(1 for deal in lost_deals 
-                                  if deal.metadata.get('activity_frequency_trend') == 'declining')
-        
-        if declining_trend_count / len(lost_deals) > 0.3:
-            warning_signs.append("Declining activity frequency")
-        
-        return warning_signs
-    
-    def _generate_benchmarks(self, all_deals: List[VectorSearchResult]) -> Dict[str, Any]:
-        """Generate performance benchmarks from all similar deals"""
-        response_times = []
-        activity_counts = []
-        success_rate_by_response_time = defaultdict(list)
-        
-        for deal in all_deals:
-            metadata = deal.metadata
-            outcome = metadata.get('deal_outcome')
-            
-            response_time = metadata.get('response_time_metrics', {}).get('avg_response_time_hours', 0)
-            if response_time > 0:
-                response_times.append(response_time)
-                
-                # Track success rate by response time buckets
-                if response_time <= 4:
-                    bucket = 'fast'
-                elif response_time <= 12:
-                    bucket = 'medium'
-                else:
-                    bucket = 'slow'
-                
-                success_rate_by_response_time[bucket].append(outcome == 'won')
-            
-            activity_count = metadata.get('activities_count', 0)
-            if activity_count > 0:
-                activity_counts.append(activity_count)
-        
-        # Calculate success rates by response time
-        success_rates = {}
-        for bucket, outcomes in success_rate_by_response_time.items():
-            if outcomes:
-                success_rates[f'{bucket}_response_success_rate'] = sum(outcomes) / len(outcomes)
-        
-        return {
-            'median_response_time': statistics.median(response_times) if response_times else 0,
-            'median_activity_count': statistics.median(activity_counts) if activity_counts else 0,
-            **success_rates,
-            'total_deals_analyzed': len(all_deals)
-        }
-    
-    def _create_characteristics_context(
-        self, 
-        current_deal_metadata: Dict[str, Any], 
-        similar_deals: List[VectorSearchResult]
-    ) -> str:
-        """Create context about deal characteristics and similarity"""
-        
-        current_amount = current_deal_metadata.get('deal_amount', 0)
-        current_size = current_deal_metadata.get('deal_size_category', 'unknown')
-        current_type = current_deal_metadata.get('deal_type', 'unknown')
-        current_stage = current_deal_metadata.get('deal_stage', 'unknown')
-        
-        # Analyze similar deals characteristics
-        similar_amounts = [deal.metadata.get('deal_amount', 0) for deal in similar_deals]
-        avg_similar_amount = statistics.mean([a for a in similar_amounts if a > 0]) if similar_amounts else 0
-        
-        similarity_scores = [deal.similarity_score for deal in similar_deals]
-        avg_similarity = statistics.mean(similarity_scores)
-        
-        context = f"""DEAL CHARACTERISTICS ANALYSIS:
-Current Deal: ${current_amount:,.0f} ({current_size}) - {current_type} - {current_stage}
-Similar Deals Found: {len(similar_deals)} (avg similarity: {avg_similarity:.2f})
-Average Similar Deal Size: ${avg_similar_amount:,.0f}"""
-        
-        return context
-    
-    def _format_context(
-        self,
-        characteristics_context: str,
-        success_patterns: Dict[str, Any],
-        failure_patterns: Dict[str, Any], 
-        open_patterns: Dict[str, Any],
-        benchmarks: Dict[str, Any],
-        total_similar_deals: int,
-        similarity_scores: List[float]
-    ) -> str:
-        """Format all patterns into structured context for LLM"""
-        
-        context_parts = [
-            "=" * 60,
-            "HISTORICAL DEAL ANALYSIS FOR SENTIMENT PREDICTION",
-            "=" * 60,
-            "",
-            characteristics_context,
-            ""
-        ]
-        
-        # Success patterns section
-        if not success_patterns.get('insufficient_data', False):
-            context_parts.extend([
-                f"✅ SUCCESSFUL DEAL PATTERNS ({success_patterns['count']} won deals):",
-                f"• Average Response Time: {success_patterns['avg_response_time']:.1f} hours",
-                f"• Average Activities: {success_patterns['avg_activity_count']:.0f}",
-                f"• Communication Gaps: {success_patterns['avg_communication_gaps']:.1f} avg",
-                f"• Business Hours Activity: {success_patterns['avg_business_hours_ratio']:.0%}",
-                f"• Average Deal Duration: {success_patterns['avg_deal_age']:.0f} days"
-            ])
-            
-            if success_patterns.get('response_time_range'):
-                min_rt, max_rt = success_patterns['response_time_range']
-                context_parts.append(f"• Response Time Range: {min_rt:.1f}-{max_rt:.1f} hours")
+            # Add key activities
+            activities = similar_deal.get('activities', [])
+            if activities:
+                context_parts.append("- **Key Activities**:")
+                for activity in activities[:2]:  # Show first 2 activities
+                    activity_type = activity.get('activity_type', 'unknown')
+                    content = activity.get('content', '')[:100] + "..."
+                    context_parts.append(f"  - {activity_type.upper()}: {content}")
             
             context_parts.append("")
-        
-        # Failure patterns section
-        if not failure_patterns.get('insufficient_data', False):
-            context_parts.extend([
-                f"❌ FAILED DEAL PATTERNS ({failure_patterns['count']} lost deals):",
-                f"• Average Response Time: {failure_patterns['avg_response_time']:.1f} hours",
-                f"• Average Activities: {failure_patterns['avg_activity_count']:.0f}",
-                f"• Communication Gaps: {failure_patterns['avg_communication_gaps']:.1f} avg",
-                f"• Business Hours Activity: {failure_patterns['avg_business_hours_ratio']:.0%}",
-                f"• Average Deal Duration: {failure_patterns['avg_deal_age']:.0f} days"
-            ])
-            
-            warning_signs = failure_patterns.get('common_warning_signs', [])
-            if warning_signs:
-                context_parts.append(f"• Common Warning Signs: {', '.join(warning_signs)}")
-            
-            context_parts.append("")
-        
-        # Open deals context
-        if open_patterns['count'] > 0:
-            context_parts.extend([
-                f"📊 OPEN DEAL PATTERNS ({open_patterns['count']} open deals):",
-                f"• Average Activities: {open_patterns['avg_activity_count']:.0f}",
-                f"• Average Probability: {open_patterns['avg_probability']:.0f}%",
-                f"• Communication Gaps: {open_patterns['avg_communication_gaps']:.1f} avg",
-                ""
-            ])
-        
-        # Benchmarks section
-        context_parts.extend([
-            "📈 PERFORMANCE BENCHMARKS:",
-            f"• Median Response Time: {benchmarks['median_response_time']:.1f} hours",
-            f"• Median Activity Count: {benchmarks['median_activity_count']:.0f}"
-        ])
-        
-        # Success rate benchmarks
-        if 'fast_response_success_rate' in benchmarks:
-            context_parts.extend([
-                f"• Fast Response (<4h) Success Rate: {benchmarks['fast_response_success_rate']:.0%}",
-                f"• Medium Response (4-12h) Success Rate: {benchmarks.get('medium_response_success_rate', 0):.0%}",
-                f"• Slow Response (>12h) Success Rate: {benchmarks.get('slow_response_success_rate', 0):.0%}"
-            ])
-        
-        context_parts.extend([
-            "",
-            "🎯 KEY INSIGHTS FOR ANALYSIS:",
-            "Use these historical patterns to evaluate the current deal's sentiment.",
-            "Compare current deal metrics against successful vs. failed patterns.",
-            "Consider response times, communication gaps, and activity trends as key indicators.",
-            ""
-        ])
         
         return "\n".join(context_parts)
     
-    def _create_no_context_message(self) -> str:
-        """Create message when no similar deals found"""
-        return """
-HISTORICAL CONTEXT: No similar deals found in database.
-This analysis will be based on general salesperson performance standards
-without historical deal pattern comparison.
-"""
+    def get_component_name(self) -> str:
+        return "SimilarDeals"
     
-    def _create_insufficient_context_message(self, deal_count: int) -> str:
-        """Create message when insufficient similar deals found"""
-        return f"""
-HISTORICAL CONTEXT: Only {deal_count} similar deal(s) found.
-Insufficient data for reliable pattern analysis.
-Analysis will use general standards with limited historical context.
-"""
+    @property
+    def is_enabled(self) -> bool:
+        return settings.CONTEXT_INCLUDE_SIMILAR_DEALS
 
+class SentimentPatternsContext(ContextComponent):
+    """Context component for sentiment patterns"""
+    
+    def build_context(self, deal_context: DealContext) -> str:
+        """Build sentiment patterns context"""
+        if not deal_context.similar_deals:
+            return ""
+        
+        context_parts = ["## SENTIMENT PATTERNS ANALYSIS"]
+        
+        # Analyze sentiment patterns from similar deals
+        won_deals = [d for d in deal_context.similar_deals if d.get('metadata', {}).get('outcome') == 'won']
+        lost_deals = [d for d in deal_context.similar_deals if d.get('metadata', {}).get('outcome') == 'lost']
+        
+        if won_deals:
+            context_parts.append("### Successful Deal Sentiment Patterns:")
+            sentiment_indicators = self._extract_sentiment_indicators(won_deals)
+            for indicator in sentiment_indicators:
+                context_parts.append(f"- {indicator}")
+        
+        if lost_deals:
+            context_parts.append("### Failed Deal Sentiment Patterns:")
+            sentiment_indicators = self._extract_sentiment_indicators(lost_deals)
+            for indicator in sentiment_indicators:
+                context_parts.append(f"- {indicator}")
+        
+        return "\n".join(context_parts)
+    
+    def _extract_sentiment_indicators(self, deals: List[Dict[str, Any]]) -> List[str]:
+        """Extract sentiment indicators from deals"""
+        indicators = []
+        
+        for deal in deals:
+            metadata = deal.get('metadata', {})
+            sentiment = metadata.get('sentiment', 'neutral')
+            
+            # Extract common sentiment patterns
+            if sentiment == 'positive':
+                indicators.append("Proactive communication and quick response times")
+            elif sentiment == 'negative':
+                indicators.append("Delayed responses and reactive communication")
+            
+            # Add activity-based indicators
+            activities = deal.get('activities', [])
+            email_count = len([a for a in activities if a.get('activity_type') == 'email'])
+            call_count = len([a for a in activities if a.get('activity_type') == 'call'])
+            
+            if email_count > call_count * 2:
+                indicators.append("Email-heavy communication pattern")
+            elif call_count > email_count:
+                indicators.append("Call-focused engagement approach")
+        
+        return list(set(indicators))  # Remove duplicates
+    
+    def get_component_name(self) -> str:
+        return "SentimentPatterns"
+    
+    @property
+    def is_enabled(self) -> bool:
+        return settings.CONTEXT_INCLUDE_SENTIMENT_PATTERNS
 
-# Example usage and testing
-def test_context_builder():
-    """Test the RAG Context Builder with sample data"""
+class LanguageToneContext(ContextComponent):
+    """Context component for language tone analysis"""
     
-    # Sample similar deals (would come from vector search)
-    from models.schemas import VectorSearchResult
+    def build_context(self, deal_context: DealContext) -> str:
+        """Build language tone context"""
+        if not deal_context.similar_deals:
+            return ""
+        
+        context_parts = ["## LANGUAGE TONE ANALYSIS"]
+        
+        # Analyze language patterns
+        tone_patterns = self._analyze_language_tone(deal_context.similar_deals)
+        
+        context_parts.append("### Common Language Patterns:")
+        for pattern in tone_patterns:
+            context_parts.append(f"- {pattern}")
+        
+        return "\n".join(context_parts)
     
-    sample_deals = [
-        VectorSearchResult(
-            deal_id="deal_001",
-            similarity_score=0.85,
-            metadata={
-                'deal_outcome': 'won',
-                'deal_amount': 50000,
-                'deal_size_category': 'medium',
-                'activities_count': 15,
-                'response_time_metrics': {'avg_response_time_hours': 4.2},
-                'communication_gaps_count': 0,
-                'business_hours_ratio': 0.8,
-                'deal_age_days': 45
-            },
-            combined_text="Sample won deal activities..."
-        ),
-        VectorSearchResult(
-            deal_id="deal_002", 
-            similarity_score=0.78,
-            metadata={
-                'deal_outcome': 'lost',
-                'deal_amount': 45000,
-                'deal_size_category': 'medium',
-                'activities_count': 8,
-                'response_time_metrics': {'avg_response_time_hours': 18.5},
-                'communication_gaps_count': 3,
-                'business_hours_ratio': 0.4,
-                'deal_age_days': 67
-            },
-            combined_text="Sample lost deal activities..."
+    def _analyze_language_tone(self, deals: List[Dict[str, Any]]) -> List[str]:
+        """Analyze language tone from similar deals"""
+        patterns = []
+        
+        for deal in deals:
+            activities = deal.get('activities', [])
+            
+            # Analyze email activities for tone
+            email_activities = [a for a in activities if a.get('activity_type') == 'email']
+            
+            for email in email_activities:
+                content = email.get('content', '').lower()
+                
+                # Detect tone patterns
+                if 'thanks' in content or 'appreciate' in content:
+                    patterns.append("Appreciative and courteous tone")
+                
+                if 'urgent' in content or 'asap' in content:
+                    patterns.append("Urgent communication style")
+                
+                if 'follow up' in content or 'following up' in content:
+                    patterns.append("Proactive follow-up approach")
+                
+                if '?' in content:
+                    patterns.append("Question-based engagement")
+        
+        return list(set(patterns))
+    
+    def get_component_name(self) -> str:
+        return "LanguageTone"
+    
+    @property
+    def is_enabled(self) -> bool:
+        return settings.CONTEXT_INCLUDE_LANGUAGE_TONE
+
+class DealProgressionContext(ContextComponent):
+    """Context component for deal progression analysis"""
+    
+    def build_context(self, deal_context: DealContext) -> str:
+        """Build deal progression context"""
+        if not deal_context.similar_deals:
+            return ""
+        
+        context_parts = ["## DEAL PROGRESSION PATTERNS"]
+        
+        # Analyze progression patterns
+        progression_insights = self._analyze_deal_progression(deal_context.similar_deals)
+        
+        context_parts.append("### Successful Progression Patterns:")
+        for insight in progression_insights['successful']:
+            context_parts.append(f"- {insight}")
+        
+        context_parts.append("### Warning Signs:")
+        for insight in progression_insights['warning']:
+            context_parts.append(f"- {insight}")
+        
+        return "\n".join(context_parts)
+    
+    def _analyze_deal_progression(self, deals: List[Dict[str, Any]]) -> Dict[str, List[str]]:
+        """Analyze deal progression patterns"""
+        successful_patterns = []
+        warning_patterns = []
+        
+        for deal in deals:
+            metadata = deal.get('metadata', {})
+            outcome = metadata.get('outcome', 'unknown')
+            activities = deal.get('activities', [])
+            
+            # Analyze activity frequency
+            if len(activities) > 10:
+                if outcome == 'won':
+                    successful_patterns.append("High activity engagement (10+ activities)")
+                else:
+                    warning_patterns.append("High activity without conversion")
+            
+            # Analyze activity types
+            activity_types = [a.get('activity_type') for a in activities]
+            meeting_count = activity_types.count('meeting')
+            
+            if meeting_count > 0:
+                if outcome == 'won':
+                    successful_patterns.append("In-person/virtual meetings scheduled")
+                else:
+                    warning_patterns.append("Meetings held but deal not closed")
+            
+            # Analyze time span
+            if activities:
+                time_span = metadata.get('time_span_days', 0)
+                if time_span > 60:
+                    if outcome == 'won':
+                        successful_patterns.append("Extended engagement period leading to close")
+                    else:
+                        warning_patterns.append("Prolonged sales cycle without closure")
+        
+        return {
+            'successful': list(set(successful_patterns)),
+            'warning': list(set(warning_patterns))
+        }
+    
+    def get_component_name(self) -> str:
+        return "DealProgression"
+    
+    @property
+    def is_enabled(self) -> bool:
+        return settings.CONTEXT_INCLUDE_DEAL_PROGRESSION
+
+class ClientBehaviorContext(ContextComponent):
+    """Context component for client behavior analysis"""
+    
+    def build_context(self, deal_context: DealContext) -> str:
+        """Build client behavior context"""
+        if not deal_context.similar_deals:
+            return ""
+        
+        context_parts = ["## CLIENT BEHAVIOR PATTERNS"]
+        
+        # Analyze client behavior
+        behavior_insights = self._analyze_client_behavior(deal_context.similar_deals)
+        
+        context_parts.append("### Positive Client Behaviors:")
+        for insight in behavior_insights['positive']:
+            context_parts.append(f"- {insight}")
+        
+        context_parts.append("### Concerning Client Behaviors:")
+        for insight in behavior_insights['concerning']:
+            context_parts.append(f"- {insight}")
+        
+        return "\n".join(context_parts)
+    
+    def _analyze_client_behavior(self, deals: List[Dict[str, Any]]) -> Dict[str, List[str]]:
+        """Analyze client behavior patterns"""
+        positive_behaviors = []
+        concerning_behaviors = []
+        
+        for deal in deals:
+            metadata = deal.get('metadata', {})
+            outcome = metadata.get('outcome', 'unknown')
+            activities = deal.get('activities', [])
+            
+            # Analyze response patterns
+            incoming_emails = [a for a in activities if a.get('activity_type') == 'email' and a.get('direction') == 'incoming']
+            outgoing_emails = [a for a in activities if a.get('activity_type') == 'email' and a.get('direction') == 'outgoing']
+            
+            if len(incoming_emails) > 0:
+                if outcome == 'won':
+                    positive_behaviors.append("Client actively responds to communications")
+                else:
+                    concerning_behaviors.append("Client communication but no conversion")
+            
+            # Analyze meeting participation
+            meetings = [a for a in activities if a.get('activity_type') == 'meeting']
+            if meetings:
+                if outcome == 'won':
+                    positive_behaviors.append("Client willing to schedule meetings")
+                else:
+                    concerning_behaviors.append("Meetings scheduled but deal stalled")
+            
+            # Analyze communication gaps
+            gaps = metadata.get('communication_gaps_count', 0)
+            if gaps > 2:
+                concerning_behaviors.append("Multiple communication gaps detected")
+        
+        return {
+            'positive': list(set(positive_behaviors)),
+            'concerning': list(set(concerning_behaviors))
+        }
+    
+    def get_component_name(self) -> str:
+        return "ClientBehavior"
+    
+    @property
+    def is_enabled(self) -> bool:
+        return settings.CONTEXT_INCLUDE_CLIENT_BEHAVIOR
+
+class RAGContextBuilder:
+    """
+    Modular context builder that combines multiple context components
+    Each component can be enabled/disabled and easily modified
+    """
+    
+    def __init__(self):
+        """Initialize context builder with all available components"""
+        self.components = [
+            SimilarDealsContext(),
+            SentimentPatternsContext(),
+            LanguageToneContext(),
+            DealProgressionContext(),
+            ClientBehaviorContext()
+        ]
+        
+        # Filter only enabled components
+        self.enabled_components = [c for c in self.components if c.is_enabled]
+        
+        logger.info(f"Context builder initialized with {len(self.enabled_components)} enabled components")
+        for component in self.enabled_components:
+            logger.debug(f"Enabled component: {component.get_component_name()}")
+    
+    def build_context(
+        self,
+        deal_id: str,
+        activities: List[Dict[str, Any]],
+        metadata: Dict[str, Any],
+        similar_deals: List[Dict[str, Any]] = None
+    ) -> str:
+        """
+        Build comprehensive context from enabled components
+        
+        Args:
+            deal_id: Current deal identifier
+            activities: Deal activities
+            metadata: Deal metadata
+            similar_deals: Similar deals from RAG retrieval
+            
+        Returns:
+            Formatted context string
+        """
+        
+        if not similar_deals:
+            return "## NO HISTORICAL CONTEXT AVAILABLE\nNo similar deals found for contextual analysis."
+        
+        deal_context = DealContext(
+            deal_id=deal_id,
+            activities=activities,
+            metadata=metadata,
+            similar_deals=similar_deals
         )
-    ]
+        
+        context_parts = ["# HISTORICAL CONTEXT FOR SENTIMENT ANALYSIS"]
+        
+        # Build context from each enabled component
+        for component in self.enabled_components:
+            try:
+                component_context = component.build_context(deal_context)
+                if component_context.strip():
+                    context_parts.append(component_context)
+                    logger.debug(f"Added context from {component.get_component_name()}")
+            except Exception as e:
+                logger.error(f"Error building context for {component.get_component_name()}: {e}")
+                continue
+        
+        context_parts.append("---")
+        context_parts.append("Use this historical context to inform your sentiment analysis of the current deal.")
+        
+        return "\n\n".join(context_parts)
     
-    # Current deal metadata
-    current_deal = {
-        'deal_amount': 48000,
-        'deal_size_category': 'medium', 
-        'deal_type': 'newbusiness',
-        'deal_stage': 'proposal'
-    }
+    def add_component(self, component: ContextComponent):
+        """Add a new context component"""
+        if component.is_enabled:
+            self.enabled_components.append(component)
+            logger.info(f"Added context component: {component.get_component_name()}")
     
-    # Build context
-    builder = RAGContextBuilder()
-    context = builder.build_context(sample_deals, current_deal)
+    def remove_component(self, component_name: str):
+        """Remove a context component by name"""
+        self.enabled_components = [
+            c for c in self.enabled_components 
+            if c.get_component_name() != component_name
+        ]
+        logger.info(f"Removed context component: {component_name}")
     
-    print("Generated RAG Context:")
-    print("=" * 80)
-    print(context)
-    print("=" * 80)
+    def get_enabled_components(self) -> List[str]:
+        """Get list of enabled component names"""
+        return [c.get_component_name() for c in self.enabled_components]
 
-
-if __name__ == "__main__":
-    test_context_builder()
+# Factory function
+def create_context_builder() -> RAGContextBuilder:
+    """Create context builder instance"""
+    return RAGContextBuilder()

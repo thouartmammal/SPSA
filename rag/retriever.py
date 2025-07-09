@@ -1,21 +1,20 @@
 import logging
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 from datetime import datetime
-import json
+import numpy as np
 
 from core.embedding_service import EmbeddingService
 from core.vector_store import VectorStore
-from core.data_processor import DealDataProcessor
 from rag.context_builder import RAGContextBuilder
-from models.schemas import VectorSearchResult, DealPattern, ProcessedActivity
+from models.schemas import VectorSearchResult, DealPattern
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
 class RAGRetriever:
     """
-    Main RAG retrieval engine that finds similar historical patterns
-    and builds contextual insights for sentiment analysis
+    Focused RAG retriever that finds relevant examples from past deals
+    based on client behavior, sentiment patterns, language tone, and deal progression
     """
     
     def __init__(
@@ -36,592 +35,305 @@ class RAGRetriever:
         self.vector_store = vector_store
         self.context_builder = context_builder or RAGContextBuilder()
         
-        # Configuration
-        self.default_top_k = settings.MAX_RETRIEVED_DOCS
-        self.similarity_threshold = settings.SIMILARITY_THRESHOLD
+        # Configuration from settings
+        self.top_k = settings.RAG_TOP_K
+        self.similarity_threshold = settings.RAG_SIMILARITY_THRESHOLD
         
         logger.info("RAG Retriever initialized")
     
-    def retrieve_similar_patterns(
+    def retrieve_relevant_examples(
         self,
-        query_text: str,
-        top_k: int = None,
-        min_similarity: float = None,
-        filters: Dict[str, Any] = None
-    ) -> List[VectorSearchResult]:
+        deal_id: str,
+        activities: List[Dict[str, Any]],
+        metadata: Dict[str, Any]
+    ) -> str:
         """
-        Retrieve similar deal patterns based on query text
+        Retrieve relevant examples from past deals and build context
         
         Args:
-            query_text: Text to find similar patterns for
-            top_k: Number of results to return
-            min_similarity: Minimum similarity threshold
-            filters: Additional filters for search
+            deal_id: Current deal identifier
+            activities: Deal activities
+            metadata: Deal metadata
             
         Returns:
-            List of similar deal patterns
+            Formatted context string with relevant examples
         """
-        
-        if not query_text or not query_text.strip():
-            logger.warning("Empty query text provided")
-            return []
-        
-        # Use defaults if not provided
-        top_k = top_k or self.default_top_k
-        min_similarity = min_similarity or self.similarity_threshold
         
         try:
-            # Generate embedding for query
-            logger.debug(f"Generating embedding for query: {query_text[:100]}...")
-            query_embedding = self.embedding_service.encode(query_text)
+            # Step 1: Create search query from current deal
+            search_query = self._create_search_query(activities, metadata)
             
-            # Search vector store
-            logger.debug(f"Searching vector store with top_k={top_k}")
-            results = self.vector_store.search_similar(
-                query_embedding=query_embedding,
-                top_k=top_k * 2  # Get more results to filter
+            if not search_query:
+                logger.warning(f"No search query generated for deal {deal_id}")
+                return "No relevant historical context available."
+            
+            # Step 2: Find similar deals using vector search
+            similar_deals = self._find_similar_deals(search_query)
+            
+            if not similar_deals:
+                logger.info(f"No similar deals found for deal {deal_id}")
+                return "No similar deals found for historical context."
+            
+            # Step 3: Filter and rank by relevance
+            relevant_deals = self._filter_and_rank_deals(similar_deals, metadata)
+            
+            # Step 4: Build context using context builder
+            context = self.context_builder.build_context(
+                deal_id=deal_id,
+                activities=activities,
+                metadata=metadata,
+                similar_deals=relevant_deals
             )
             
-            # logger.info(f"Raw results similarity scores: {[r.similarity_score for r in results]}")
-            logger.info(f"Maxium similarity Found: {max([r.similarity_score for r in results])}")
-            logger.info(f"Using similarity threshold: {min_similarity}")
-
-            # Filter by similarity threshold
-            filtered_results = [
-                result for result in results 
-                if result.similarity_score >= min_similarity
-            ]
-            
-            # Apply additional filters if provided
-            # if filters:
-            #     filtered_results = self._apply_filters(filtered_results, filters)
-            
-            # Limit to requested number
-            final_results = filtered_results[:top_k]
-            
-            logger.info(f"Retrieved {len(final_results)} similar patterns (filtered from {len(results)} total)")
-            return final_results
+            logger.info(f"Retrieved {len(relevant_deals)} relevant examples for deal {deal_id}")
+            return context
             
         except Exception as e:
-            logger.error(f"Error retrieving similar patterns: {e}")
-            return []
+            logger.error(f"Error retrieving examples for deal {deal_id}: {e}")
+            return "Error retrieving historical context."
     
-    def retrieve_for_deal_analysis(
-        self,
-        current_deal_text: str,
-        current_deal_metadata: Dict[str, Any],
-        analysis_type: str = "sentiment"
-    ) -> Tuple[List[VectorSearchResult], str]:
+    def _create_search_query(
+        self, 
+        activities: List[Dict[str, Any]], 
+        metadata: Dict[str, Any]
+    ) -> str:
         """
-        Retrieve patterns specifically for deal sentiment analysis
+        Create search query focusing on client behavior and sentiment patterns
         
         Args:
-            current_deal_text: Combined text of current deal activities
-            current_deal_metadata: Metadata about current deal
-            analysis_type: Type of analysis being performed
+            activities: Deal activities
+            metadata: Deal metadata
             
         Returns:
-            Tuple of (similar_deals, formatted_context)
+            Search query string
         """
         
-        # Enhance query with deal characteristics for better matching
-        enhanced_query = self._enhance_query_for_analysis(
-            current_deal_text, 
-            current_deal_metadata,
-            analysis_type
-        )
-        
-        # Retrieve similar patterns
-        similar_deals = self.retrieve_similar_patterns(
-            query_text=enhanced_query,
-            top_k=self.default_top_k,
-            filters=self._get_analysis_filters(current_deal_metadata, analysis_type)
-        )
-        
-        # Build context using context builder
-        context = self.context_builder.build_context(
-            similar_deals=similar_deals,
-            current_deal_metadata=current_deal_metadata,
-            max_context_length=settings.CONTEXT_WINDOW_SIZE
-        )
-        
-        logger.info(f"Built analysis context from {len(similar_deals)} similar deals")
-        return similar_deals, context
-    
-    def retrieve_by_deal_characteristics(
-        self,
-        deal_amount: float = None,
-        deal_stage: str = None,
-        deal_type: str = None,
-        deal_outcome: str = None,
-        activity_types: List[str] = None,
-        top_k: int = None
-    ) -> List[VectorSearchResult]:
-        """
-        Retrieve deals by specific characteristics
-        
-        Args:
-            deal_amount: Deal amount range
-            deal_stage: Deal stage
-            deal_type: Type of deal
-            deal_outcome: Deal outcome (won/lost/open)
-            activity_types: Types of activities
-            top_k: Number of results
-            
-        Returns:
-            List of matching deals
-        """
-        
-        # Build query based on characteristics
         query_parts = []
         
+        # Extract key content from activities
+        for activity in activities:
+            content = activity.get('content', '').strip()
+            if content:
+                # Focus on meaningful content, not just activity type
+                query_parts.append(content)
+        
+        # Add deal characteristics for context
+        deal_stage = metadata.get('deal_stage', '')
         if deal_stage:
             query_parts.append(f"deal stage {deal_stage}")
         
+        deal_type = metadata.get('deal_type', '')
         if deal_type:
             query_parts.append(f"deal type {deal_type}")
         
-        if activity_types:
-            query_parts.append(f"activities {' '.join(activity_types)}")
+        # Combine into search query
+        search_query = " ".join(query_parts)
         
-        if deal_outcome:
-            query_parts.append(f"outcome {deal_outcome}")
+        # Limit query length for better search performance
+        max_query_length = 1000
+        if len(search_query) > max_query_length:
+            search_query = search_query[:max_query_length]
         
-        # Default query if no characteristics provided
-        if not query_parts:
-            query_parts.append("sales deal activities")
-        
-        query_text = " ".join(query_parts)
-        
-        # Build filters
-        filters = {}
-        if deal_outcome:
-            filters['deal_outcome'] = deal_outcome
-        if deal_amount:
-            filters['deal_amount_range'] = deal_amount
-        
-        return self.retrieve_similar_patterns(
-            query_text=query_text,
-            top_k=top_k,
-            filters=filters
-        )
+        return search_query
     
-    def get_success_patterns(self, query_text: str, top_k: int = 5) -> List[VectorSearchResult]:
-        """Get patterns from successful deals only"""
-        return self.retrieve_similar_patterns(
-            query_text=query_text,
-            top_k=top_k,
-            filters={'deal_outcome': 'won'}
-        )
-    
-    def get_failure_patterns(self, query_text: str, top_k: int = 5) -> List[VectorSearchResult]:
-        """Get patterns from failed deals only"""
-        return self.retrieve_similar_patterns(
-            query_text=query_text,
-            top_k=top_k,
-            filters={'deal_outcome': 'lost'}
-        )
-    
-    def get_contextual_insights(
-        self,
-        deal_text: str,
-        deal_metadata: Dict[str, Any],
-        insight_type: str = "comprehensive"
-    ) -> Dict[str, Any]:
+    def _find_similar_deals(self, search_query: str) -> List[Dict[str, Any]]:
         """
-        Get comprehensive contextual insights for a deal
+        Find similar deals using vector search
         
         Args:
-            deal_text: Deal activity text
-            deal_metadata: Deal metadata
-            insight_type: Type of insights to generate
+            search_query: Query string for similarity search
             
         Returns:
-            Dictionary of insights and recommendations
+            List of similar deals
         """
         
         try:
-            # Get similar deals for analysis
-            similar_deals, context = self.retrieve_for_deal_analysis(
-                current_deal_text=deal_text,
-                current_deal_metadata=deal_metadata,
-                analysis_type=insight_type
+            # Generate embedding for search query
+            query_embedding = self.embedding_service.encode(search_query)
+            
+            # Search vector database
+            search_results = self.vector_store.search(
+                query_embedding=query_embedding,
+                top_k=self.top_k,
+                min_similarity=self.similarity_threshold
             )
             
-            # Analyze patterns
-            insights = self._analyze_patterns(similar_deals, deal_metadata)
-            
-            # Generate recommendations
-            recommendations = self._generate_recommendations(insights, deal_metadata)
-            
-            return {
-                'similar_deals_count': len(similar_deals),
-                'context': context,
-                'insights': insights,
-                'recommendations': recommendations,
-                'analysis_metadata': {
-                    'timestamp': datetime.utcnow().isoformat(),
-                    'insight_type': insight_type,
-                    'similarity_threshold': self.similarity_threshold
+            # Convert search results to deal format
+            similar_deals = []
+            for result in search_results:
+                deal_data = {
+                    'deal_id': result.deal_id,
+                    'similarity_score': result.similarity_score,
+                    'activities': self._parse_activities_from_content(result.combined_text),
+                    'metadata': result.metadata
                 }
-            }
+                similar_deals.append(deal_data)
+            
+            return similar_deals
             
         except Exception as e:
-            logger.error(f"Error generating contextual insights: {e}")
-            return {
-                'error': str(e),
-                'similar_deals_count': 0,
-                'context': '',
-                'insights': {},
-                'recommendations': []
-            }
+            logger.error(f"Error in vector search: {e}")
+            return []
     
-    def _enhance_query_for_analysis(
-        self,
-        deal_text: str,
-        deal_metadata: Dict[str, Any],
-        analysis_type: str
-    ) -> str:
-        """Enhance query with deal characteristics for better matching"""
+    def _parse_activities_from_content(self, combined_text: str) -> List[Dict[str, Any]]:
+        """
+        Parse activities from combined text content
         
-        query_parts = [deal_text]
+        Args:
+            combined_text: Combined activities text
+            
+        Returns:
+            List of parsed activities
+        """
         
-        # Add deal characteristics to improve matching
-        if deal_metadata.get('deal_stage'):
-            query_parts.append(f"stage {deal_metadata['deal_stage']}")
+        activities = []
         
-        if deal_metadata.get('deal_type'):
-            query_parts.append(f"type {deal_metadata['deal_type']}")
+        # Simple parsing logic - split by common activity markers
+        lines = combined_text.split('\n')
         
-        if deal_metadata.get('deal_size_category'):
-            query_parts.append(f"size {deal_metadata['deal_size_category']}")
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Detect activity type and content
+            activity_type = 'unknown'
+            content = line
+            
+            if 'EMAIL:' in line.upper():
+                activity_type = 'email'
+                content = line.split('EMAIL:', 1)[1].strip()
+            elif 'CALL:' in line.upper():
+                activity_type = 'call'
+                content = line.split('CALL:', 1)[1].strip()
+            elif 'MEETING:' in line.upper():
+                activity_type = 'meeting'
+                content = line.split('MEETING:', 1)[1].strip()
+            elif 'NOTE:' in line.upper():
+                activity_type = 'note'
+                content = line.split('NOTE:', 1)[1].strip()
+            elif 'TASK:' in line.upper():
+                activity_type = 'task'
+                content = line.split('TASK:', 1)[1].strip()
+            
+            activities.append({
+                'activity_type': activity_type,
+                'content': content
+            })
         
-        # Add analysis-specific terms
-        if analysis_type == "sentiment":
-            query_parts.append("salesperson behavior communication patterns")
-        elif analysis_type == "risk":
-            query_parts.append("deal risk factors warning signs")
-        elif analysis_type == "opportunity":
-            query_parts.append("deal opportunities success factors")
-        
-        return " ".join(query_parts)
+        return activities
     
-    def _get_analysis_filters(
-        self,
-        deal_metadata: Dict[str, Any],
-        analysis_type: str
-    ) -> Dict[str, Any]:
-        """Get filters for analysis-specific retrieval"""
+    def _filter_and_rank_deals(
+        self, 
+        similar_deals: List[Dict[str, Any]], 
+        current_metadata: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """
+        Filter and rank deals by relevance to current deal
         
-        filters = {}
+        Args:
+            similar_deals: List of similar deals from vector search
+            current_metadata: Current deal metadata
+            
+        Returns:
+            Filtered and ranked deals
+        """
         
-        # Filter by deal size category for better matching
-        if deal_metadata.get('deal_size_category'):
-            filters['deal_size_category'] = deal_metadata['deal_size_category']
+        scored_deals = []
         
-        # Filter by deal type for better matching
-        if deal_metadata.get('deal_type'):
-            filters['deal_type'] = deal_metadata['deal_type']
+        for deal in similar_deals:
+            relevance_score = self._calculate_relevance_score(deal, current_metadata)
+            deal['relevance_score'] = relevance_score
+            scored_deals.append(deal)
         
-        return filters
+        # Sort by relevance score (descending) and keep top deals
+        scored_deals.sort(key=lambda x: x['relevance_score'], reverse=True)
+        
+        # Filter by minimum relevance threshold
+        min_relevance = 0.3
+        filtered_deals = [d for d in scored_deals if d['relevance_score'] >= min_relevance]
+        
+        # Return top deals
+        return filtered_deals[:settings.RAG_TOP_K]
     
-    def _apply_filters(
-        self,
-        results: List[VectorSearchResult],
-        filters: Dict[str, Any]
-    ) -> List[VectorSearchResult]:
-        """Apply business criteria and additional filters to search results"""
+    def _calculate_relevance_score(
+        self, 
+        similar_deal: Dict[str, Any], 
+        current_metadata: Dict[str, Any]
+    ) -> float:
+        """
+        Calculate relevance score based on multiple factors
         
-        filtered_results = []
-        
-        # Get current deal context for business criteria filtering
-        current_deal = filters.get('current_deal', {})
-        
-        for result in results:
-            include = True
+        Args:
+            similar_deal: Similar deal data
+            current_metadata: Current deal metadata
             
-            # Apply business criteria filtering first
-            if current_deal:
-                include = self._meets_business_criteria(result, current_deal)
-            
-            # Apply additional filters if business criteria passed
-            if include:
-                for filter_key, filter_value in filters.items():
-                    if filter_key == 'current_deal':
-                        continue  # Already handled above
-                        
-                    elif filter_key == 'deal_outcome':
-                        if result.metadata.get('deal_outcome') != filter_value:
-                            include = False
-                            break
-                            
-                    elif filter_key == 'deal_size_category':
-                        if result.metadata.get('deal_size_category') != filter_value:
-                            include = False
-                            break
-                            
-                    elif filter_key == 'deal_type':
-                        if result.metadata.get('deal_type') != filter_value:
-                            include = False
-                            break
-                            
-                    elif filter_key == 'deal_amount_range':
-                        result_amount = result.metadata.get('deal_amount', 0)
-                        if isinstance(filter_value, tuple):
-                            min_amount, max_amount = filter_value
-                            if not (min_amount <= result_amount <= max_amount):
-                                include = False
-                                break
-            
-            if include:
-                filtered_results.append(result)
+        Returns:
+            Relevance score (0-1)
+        """
         
-        return filtered_results
-
-    def _meets_business_criteria(
-        self,
-        result: VectorSearchResult,
-        current_deal: Dict[str, Any]
-    ) -> bool:
-        """Check if result meets business criteria for similarity"""
+        score = 0.0
+        weights = {
+            'vector_similarity': 0.3,
+            'deal_stage_match': 0.2,
+            'deal_type_match': 0.2,
+            'deal_size_similarity': 0.15,
+            'outcome_preference': 0.15
+        }
         
-        # Extract current deal values
-        current_amount = current_deal.get('amount') or current_deal.get('deal_amount', 0)
-        current_deal_type = current_deal.get('dealtype') or current_deal.get('deal_type', '')
-        current_probability = current_deal.get('deal_stage_probability') or current_deal.get('probability', 0)
+        similar_metadata = similar_deal.get('metadata', {})
         
-        # Extract result values
-        result_amount = result.metadata.get('deal_amount') or result.metadata.get('amount', 0)
-        result_deal_type = result.metadata.get('deal_type') or result.metadata.get('dealtype', '')
-        result_probability = result.metadata.get('deal_stage_probability') or result.metadata.get('probability', 0)
+        # Vector similarity score
+        vector_score = similar_deal.get('similarity_score', 0.0)
+        score += vector_score * weights['vector_similarity']
         
-        # Convert to proper types
+        # Deal stage match
+        current_stage = current_metadata.get('deal_stage', '')
+        similar_stage = similar_metadata.get('deal_stage', '')
+        if current_stage and similar_stage and current_stage == similar_stage:
+            score += weights['deal_stage_match']
+        
+        # Deal type match
+        current_type = current_metadata.get('deal_type', '')
+        similar_type = similar_metadata.get('deal_type', '')
+        if current_type and similar_type and current_type == similar_type:
+            score += weights['deal_type_match']
+        
+        # Deal size similarity
+        current_amount = current_metadata.get('deal_amount', 0)
+        similar_amount = similar_metadata.get('deal_amount', 0)
+        if current_amount > 0 and similar_amount > 0:
+            size_ratio = min(current_amount, similar_amount) / max(current_amount, similar_amount)
+            score += size_ratio * weights['deal_size_similarity']
+        
+        # Prefer deals with clear outcomes for learning
+        outcome = similar_metadata.get('outcome', '')
+        if outcome in ['won', 'lost']:
+            score += weights['outcome_preference']
+        
+        return min(score, 1.0)  # Cap at 1.0
+    
+    def get_retrieval_stats(self) -> Dict[str, Any]:
+        """Get retrieval statistics"""
         try:
-            current_amount = float(current_amount) if current_amount else 0
-            result_amount = float(result_amount) if result_amount else 0
-            current_probability = float(current_probability) if current_probability else 0
-            result_probability = float(result_probability) if result_probability else 0
-        except (ValueError, TypeError):
-            return False
-        
-        # Check deal type (must match exactly)
-        if not current_deal_type or not result_deal_type:
-            return False
-        if current_deal_type.lower().strip() != result_deal_type.lower().strip():
-            return False
-        
-        # Check amount (within 30% tolerance)
-        if current_amount <= 0 or result_amount <= 0:
-            return False
-        amount_diff = abs(current_amount - result_amount) / current_amount
-        if amount_diff > 0.3:  # 30% tolerance
-            return False
-        
-        # Check probability (within ±0.2 tolerance)
-        if current_probability < 0 or result_probability < 0:
-            return False
-        
-        # Convert percentages to 0-1 scale if needed
-        if current_probability > 1:
-            current_probability = current_probability / 100.0
-        if result_probability > 1:
-            result_probability = result_probability / 100.0
-            
-        probability_diff = abs(current_probability - result_probability)
-        if probability_diff > 0.2:  # ±0.2 tolerance
-            return False
-        
-        return True
-    
-    def _analyze_patterns(
-        self,
-        similar_deals: List[VectorSearchResult],
-        current_deal_metadata: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Analyze patterns from similar deals"""
-        
-        if not similar_deals:
-            return {'pattern_analysis': 'insufficient_data'}
-        
-        # Group by outcomes
-        won_deals = [d for d in similar_deals if d.metadata.get('deal_outcome') == 'won']
-        lost_deals = [d for d in similar_deals if d.metadata.get('deal_outcome') == 'lost']
-        open_deals = [d for d in similar_deals if d.metadata.get('deal_outcome') == 'open']
-        
-        # Analyze current deal position
-        current_metrics = self._extract_current_metrics(current_deal_metadata)
-        
-        # Compare against patterns
-        insights = {
-            'total_similar_deals': len(similar_deals),
-            'won_deals_count': len(won_deals),
-            'lost_deals_count': len(lost_deals),
-            'open_deals_count': len(open_deals),
-            'success_rate': len(won_deals) / len(similar_deals) if similar_deals else 0,
-            'current_deal_position': current_metrics,
-            'risk_factors': self._identify_risk_factors(current_metrics, lost_deals),
-            'success_indicators': self._identify_success_indicators(current_metrics, won_deals)
-        }
-        
-        return insights
-    
-    def _extract_current_metrics(self, deal_metadata: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract key metrics from current deal"""
-        return {
-            'activities_count': deal_metadata.get('activities_count', 0),
-            'response_time': deal_metadata.get('response_time_metrics', {}).get('avg_response_time_hours', 0),
-            'communication_gaps': deal_metadata.get('communication_gaps_count', 0),
-            'business_hours_ratio': deal_metadata.get('business_hours_ratio', 0),
-            'activity_trend': deal_metadata.get('activity_frequency_trend', 'unknown'),
-            'deal_age': deal_metadata.get('deal_age_days', 0)
-        }
-    
-    def _identify_risk_factors(
-        self,
-        current_metrics: Dict[str, Any],
-        lost_deals: List[VectorSearchResult]
-    ) -> List[str]:
-        """Identify risk factors based on lost deal patterns"""
-        
-        risk_factors = []
-        
-        if not lost_deals:
-            return risk_factors
-        
-        # Analyze lost deal patterns
-        avg_lost_response_time = sum(
-            d.metadata.get('response_time_metrics', {}).get('avg_response_time_hours', 0)
-            for d in lost_deals
-        ) / len(lost_deals)
-        
-        avg_lost_gaps = sum(
-            d.metadata.get('communication_gaps_count', 0)
-            for d in lost_deals
-        ) / len(lost_deals)
-        
-        # Compare current deal
-        if current_metrics['response_time'] > avg_lost_response_time:
-            risk_factors.append("Response time exceeds typical lost deal pattern")
-        
-        if current_metrics['communication_gaps'] >= avg_lost_gaps:
-            risk_factors.append("Communication gaps match lost deal pattern")
-        
-        if current_metrics['activity_trend'] == 'declining':
-            declining_lost = sum(
-                1 for d in lost_deals 
-                if d.metadata.get('activity_frequency_trend') == 'declining'
-            )
-            if declining_lost / len(lost_deals) > 0.5:
-                risk_factors.append("Declining activity trend common in lost deals")
-        
-        return risk_factors
-    
-    def _identify_success_indicators(
-        self,
-        current_metrics: Dict[str, Any],
-        won_deals: List[VectorSearchResult]
-    ) -> List[str]:
-        """Identify success indicators based on won deal patterns"""
-        
-        success_indicators = []
-        
-        if not won_deals:
-            return success_indicators
-        
-        # Analyze won deal patterns
-        avg_won_response_time = sum(
-            d.metadata.get('response_time_metrics', {}).get('avg_response_time_hours', 0)
-            for d in won_deals
-        ) / len(won_deals)
-        
-        avg_won_activities = sum(
-            d.metadata.get('activities_count', 0)
-            for d in won_deals
-        ) / len(won_deals)
-        
-        # Compare current deal
-        if current_metrics['response_time'] <= avg_won_response_time:
-            success_indicators.append("Response time matches successful deal pattern")
-        
-        if current_metrics['activities_count'] >= avg_won_activities:
-            success_indicators.append("Activity level matches successful deal pattern")
-        
-        if current_metrics['communication_gaps'] == 0:
-            no_gap_won = sum(
-                1 for d in won_deals 
-                if d.metadata.get('communication_gaps_count', 0) == 0
-            )
-            if no_gap_won / len(won_deals) > 0.7:
-                success_indicators.append("No communication gaps aligns with won deals")
-        
-        return success_indicators
-    
-    def _generate_recommendations(
-        self,
-        insights: Dict[str, Any],
-        deal_metadata: Dict[str, Any]
-    ) -> List[Dict[str, str]]:
-        """Generate actionable recommendations based on insights"""
-        
-        recommendations = []
-        
-        # Risk-based recommendations
-        risk_factors = insights.get('risk_factors', [])
-        for risk in risk_factors:
-            if "response time" in risk.lower():
-                recommendations.append({
-                    'type': 'urgent',
-                    'action': 'Improve response time',
-                    'details': 'Reduce response time to emails and calls to match successful deal patterns'
-                })
-            
-            elif "communication gaps" in risk.lower():
-                recommendations.append({
-                    'type': 'critical',
-                    'action': 'Maintain consistent communication',
-                    'details': 'Avoid communication gaps longer than 2-3 days'
-                })
-            
-            elif "declining activity" in risk.lower():
-                recommendations.append({
-                    'type': 'important',
-                    'action': 'Increase engagement',
-                    'details': 'Boost activity frequency to prevent deal momentum loss'
-                })
-        
-        # Success-based recommendations
-        success_indicators = insights.get('success_indicators', [])
-        if success_indicators:
-            recommendations.append({
-                'type': 'positive',
-                'action': 'Continue current approach',
-                'details': 'Your current patterns match successful deals - maintain momentum'
-            })
-        
-        # General recommendations based on success rate
-        success_rate = insights.get('success_rate', 0)
-        if success_rate < 0.3:
-            recommendations.append({
-                'type': 'warning',
-                'action': 'Review deal strategy',
-                'details': 'Similar deals have low success rate - consider different approach'
-            })
-        elif success_rate > 0.7:
-            recommendations.append({
-                'type': 'positive',
-                'action': 'High success probability',
-                'details': 'Similar deals have high success rate - maintain current trajectory'
-            })
-        
-        return recommendations
-
+            vector_stats = self.vector_store.get_stats()
+            return {
+                'vector_store_stats': vector_stats,
+                'top_k': self.top_k,
+                'similarity_threshold': self.similarity_threshold,
+                'enabled_context_components': self.context_builder.get_enabled_components()
+            }
+        except Exception as e:
+            logger.error(f"Error getting retrieval stats: {e}")
+            return {'error': str(e)}
 
 # Factory function
 def create_rag_retriever(
     embedding_service: EmbeddingService = None,
-    vector_store: VectorStore = None
+    vector_store: VectorStore = None,
+    context_builder: RAGContextBuilder = None
 ) -> RAGRetriever:
-    """Create RAG retriever with default services if not provided"""
+    """Create RAG retriever instance"""
     
     if not embedding_service:
         from core.embedding_service import get_embedding_service
@@ -631,58 +343,12 @@ def create_rag_retriever(
         from core.vector_store import get_vector_store
         vector_store = get_vector_store()
     
+    if not context_builder:
+        from rag.context_builder import create_context_builder
+        context_builder = create_context_builder()
+    
     return RAGRetriever(
         embedding_service=embedding_service,
-        vector_store=vector_store
+        vector_store=vector_store,
+        context_builder=context_builder
     )
-
-
-# Example usage and testing
-def test_rag_retriever():
-    """Test the RAG retriever with sample data"""
-    
-    try:
-        # Create retriever
-        retriever = create_rag_retriever()
-        
-        # Test query
-        test_query = "Client interested in proposal, scheduled follow-up meeting"
-        
-        print("Testing RAG Retriever...")
-        print(f"Query: {test_query}")
-        
-        # Retrieve similar patterns
-        similar_deals = retriever.retrieve_similar_patterns(test_query, top_k=3)
-        
-        print(f"\nFound {len(similar_deals)} similar deals:")
-        for i, deal in enumerate(similar_deals):
-            print(f"{i+1}. Deal {deal.deal_id} (similarity: {deal.similarity_score:.3f})")
-            print(f"   Outcome: {deal.metadata.get('deal_outcome', 'unknown')}")
-            print(f"   Activities: {deal.metadata.get('activities_count', 0)}")
-        
-        # Test contextual insights
-        sample_metadata = {
-            'deal_amount': 50000,
-            'deal_stage': 'proposal',
-            'deal_type': 'newbusiness',
-            'activities_count': 12,
-            'response_time_metrics': {'avg_response_time_hours': 6.2},
-            'communication_gaps_count': 1,
-            'business_hours_ratio': 0.8,
-            'activity_frequency_trend': 'stable'
-        }
-        
-        insights = retriever.get_contextual_insights(test_query, sample_metadata)
-        
-        print(f"\nContextual Insights:")
-        print(f"Similar deals: {insights['similar_deals_count']}")
-        print(f"Risk factors: {insights['insights'].get('risk_factors', [])}")
-        print(f"Success indicators: {insights['insights'].get('success_indicators', [])}")
-        print(f"Recommendations: {len(insights['recommendations'])}")
-        
-    except Exception as e:
-        print(f"Test failed: {e}")
-
-
-if __name__ == "__main__":
-    test_rag_retriever()
