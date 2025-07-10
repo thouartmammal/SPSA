@@ -149,6 +149,7 @@ graph TB
     class VS,CACHE,FS,CHROMA,PINECONE storage
     class CRM,HUBSPOT,SF,CSV,JSON data
     class HELPERS,VALID,PERF,HEALTH utils
+<<<<<<< HEAD
 ```
 
 ## Component Details
@@ -227,6 +228,86 @@ sequenceDiagram
     API-->>Client: JSON sentiment analysis
 ```
 
+=======
+```
+
+## Component Details
+
+### 🌐 Client Layer
+- **REST API Clients**: External applications consuming the API
+- **Swagger UI**: Interactive API documentation at `/docs`
+- **Testing Tools**: cURL, Postman for API testing
+- **Web Dashboard**: Optional frontend interface
+
+### 🚪 API Gateway & Middleware
+- **FastAPI Server**: High-performance async web framework
+- **Rate Limiter**: Prevents API abuse (60 calls/min, 1000/hour)
+- **Authentication**: Bearer token and API key support
+- **Request Logging**: Comprehensive request/response logging
+- **Error Handling**: Standardized error responses
+
+### ⚡ Core Application Services
+- **Sentiment Analyzer**: Main orchestration service for sentiment analysis
+- **RAG Retriever**: Retrieves similar historical deal patterns
+- **Knowledge Base Manager**: Manages vector database operations
+- **Data Processor**: Processes CRM data into structured formats
+- **Context Builder**: Builds intelligent context from similar deals
+
+### 🤖 AI/ML Layer
+- **LLM Clients**: Multi-provider LLM integration
+  - Azure OpenAI (Recommended for enterprise)
+  - OpenAI GPT-4/3.5
+  - Groq (Fast inference)
+  - Anthropic Claude
+- **Embedding Service**: Text-to-vector conversion
+  - Sentence Transformers (Local, free)
+  - OpenAI text-embedding-3-large
+  - HuggingFace models
+- **Prompt Builder**: Advanced prompt engineering for salesperson analysis
+
+### 💾 Data Storage Layer
+- **Vector Store**: Similarity search and pattern storage
+  - ChromaDB (Local development)
+  - Pinecone (Production cloud)
+- **Redis Cache**: High-performance caching layer
+- **File System**: Local data and configuration storage
+
+### 📊 Data Sources
+- **CRM Systems**: Salesforce, HubSpot integration
+- **File Formats**: JSON, CSV data import
+- **Migration Tools**: Data transformation utilities
+
+### 🛠️ Utilities & Monitoring
+- **Helper Functions**: Text processing, validation, similarity calculations
+- **Performance Monitoring**: Execution time tracking
+- **Health Checks**: System status monitoring
+- **Data Validation**: Input/output validation
+
+## Data Flow
+
+### 1. Deal Sentiment Analysis Flow
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API
+    participant Analyzer
+    participant RAG
+    participant LLM
+    participant VectorDB
+    
+    Client->>API: POST /analyze/sentiment
+    API->>Analyzer: Process deal data
+    Analyzer->>RAG: Get similar patterns
+    RAG->>VectorDB: Vector similarity search
+    VectorDB-->>RAG: Historical patterns
+    RAG-->>Analyzer: Contextual insights
+    Analyzer->>LLM: Generate sentiment analysis
+    LLM-->>Analyzer: Analysis results
+    Analyzer-->>API: Structured response
+    API-->>Client: JSON sentiment analysis
+```
+
+>>>>>>> dev
 ### 2. Knowledge Base Building Flow
 ```mermaid
 sequenceDiagram
@@ -286,6 +367,10 @@ sequenceDiagram
 └─────────────────┘    └─────────────────┘    └─────────────────┘
 ```
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> dev
 ## Scalability Considerations
 
 ### Horizontal Scaling
@@ -306,6 +391,11 @@ sequenceDiagram
 - Multiple provider support for cost optimization
 
 This architecture provides a robust, scalable, and production-ready sales sentiment analysis system that can handle enterprise workloads while maintaining high performance and reliability.
+<<<<<<< HEAD
+=======
+
+## 🚀 Quick Start
+>>>>>>> dev
 
 ### Prerequisites
 

@@ -1,16 +1,17 @@
-import json
-from typing import List, Dict, Any, Optional, Tuple
-from datetime import datetime
 import logging
+from typing import List, Dict, Any, Optional
+from datetime import datetime, timezone
+import json
 from pathlib import Path
 
-from models.schemas import ProcessedActivity, DealPattern
+from models.schemas import ProcessedActivity, DealPattern, ProcessedDealData, DealMetrics, DealCharacteristics
 from core.embedding_service import EmbeddingService
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
 class DealDataProcessor:
-    """Process deal activities and convert to vector embeddings"""
+    """Simplified deal data processor focused on core functionality"""
     
     def __init__(self, embedding_service: EmbeddingService):
         """
@@ -20,7 +21,7 @@ class DealDataProcessor:
             embedding_service: Initialized embedding service instance
         """
         self.embedding_service = embedding_service
-        logger.info("DealDataProcessor initialized")
+        logger.info("Deal Data Processor initialized")
     
     def load_deal_data(self, file_path: str) -> List[Dict[str, Any]]:
         """Load deal data from JSON file"""
@@ -33,830 +34,490 @@ class DealDataProcessor:
             logger.error(f"Error loading data from {file_path}: {e}")
             raise
     
-    def parse_activity(self, activity: Dict[str, Any], deal_id: str) -> ProcessedActivity:
+    def process_deal(self, deal_data: Dict[str, Any]) -> ProcessedDealData:
+        """
+        Process a single deal into structured format
+        
+        Args:
+            deal_data: Raw deal data
+            
+        Returns:
+            Processed deal data
+        """
+        
+        # logger.info(deal_data)
+
+        deal_id = str(deal_data.get('deal_id', 'unknown'))
+        
+        try:
+            # Process activities
+            activities = deal_data.get('activities', [])
+            processed_activities = [
+                self._parse_activity(activity, deal_id) 
+                for activity in activities
+            ]
+            
+            # Filter out None activities
+            processed_activities = [a for a in processed_activities if a is not None]
+            
+            # Calculate metrics
+            deal_metrics = self._calculate_deal_metrics(processed_activities, deal_data)
+            
+            # Extract characteristics
+            deal_characteristics = self._extract_deal_characteristics(deal_data, deal_metrics)
+            
+            # logger.info(f"Deal id: {deal_id} -- {deal_characteristics}")
+
+            # Create combined text
+            combined_text = self._create_combined_text(processed_activities)
+            
+            # Generate embedding
+            embedding = None
+            if combined_text.strip():
+                try:
+                    embedding = self.embedding_service.encode(combined_text)
+                except Exception as e:
+                    logger.error(f"Error generating embedding for deal {deal_id}: {e}")
+            
+            return ProcessedDealData(
+                deal_id=deal_id,
+                raw_deal_data=deal_data,
+                processed_activities=processed_activities,
+                deal_metrics=deal_metrics,
+                deal_characteristics=deal_characteristics,
+                combined_text=combined_text,
+                embedding=embedding,
+                processing_timestamp=datetime.utcnow()
+            )
+            
+        except Exception as e:
+            logger.error(f"Error processing deal {deal_id}: {e}")
+            raise
+    
+    def _parse_activity(self, activity: Dict[str, Any], deal_id: str) -> Optional[ProcessedActivity]:
         """Parse a single activity into structured format"""
         
-        # Define correct date fields for each activity type
-        DATE_FIELDS = {
+        try:
+            activity_type = activity.get('activity_type', 'unknown')
+            
+            # Extract content based on activity type
+            content = self._extract_activity_content(activity)
+            
+            if not content.strip():
+                return None
+            
+            # Extract timestamp
+            timestamp = self._extract_activity_timestamp(activity)
+            
+            # Extract direction
+            direction = activity.get('direction') or activity.get('call_direction') or 'unknown'
+            
+            # Create metadata based on activity type
+            metadata = {
+                'original_activity_type': activity_type
+            }
+            
+            # Add type-specific metadata based on your actual structure
+            if activity_type == 'email':
+                metadata.update({
+                    'sent_at': activity.get('sent_at'),
+                    'from': activity.get('from'),
+                    'to': activity.get('to'),
+                    'subject': activity.get('subject'),
+                    'state': activity.get('state'),
+                    'direction': activity.get('direction')
+                })
+            elif activity_type == 'call':
+                metadata.update({
+                    'id': activity.get('id'),
+                    'createdate': activity.get('createdate'),
+                    'call_title': activity.get('call_title'),
+                    'call_direction': activity.get('call_direction'),
+                    'call_duration': activity.get('call_duration'),
+                    'call_status': activity.get('call_status')
+                })
+            elif activity_type == 'meeting':
+                metadata.update({
+                    'id': activity.get('id'),
+                    'meeting_title': activity.get('meeting_title'),
+                    'meeting_location': activity.get('meeting_location'),
+                    'meeting_location_type': activity.get('meeting_location_type'),
+                    'meeting_outcome': activity.get('meeting_outcome'),
+                    'meeting_start_time': activity.get('meeting_start_time'),
+                    'meeting_end_time': activity.get('meeting_end_time')
+                })
+            elif activity_type == 'note':
+                metadata.update({
+                    'id': activity.get('id'),
+                    'createdate': activity.get('createdate'),
+                    'lastmodifieddate': activity.get('lastmodifieddate')
+                })
+            elif activity_type == 'task':
+                metadata.update({
+                    'id': activity.get('id'),
+                    'createdate': activity.get('createdate'),
+                    'task_priority': activity.get('task_priority'),
+                    'task_status': activity.get('task_status'),
+                    'task_type': activity.get('task_type'),
+                    'task_subject': activity.get('task_subject')
+                })
+            
+            return ProcessedActivity(
+                deal_id=deal_id,
+                activity_type=activity_type,
+                timestamp=timestamp,
+                content=content,
+                direction=direction,
+                metadata=metadata
+            )
+            
+        except Exception as e:
+            logger.warning(f"Error parsing activity for deal {deal_id}: {e}")
+            return None
+    
+    def _extract_activity_content(self, activity: Dict[str, Any]) -> str:
+        """Extract content from activity based on type"""
+        
+        activity_type = activity.get('activity_type', 'unknown')
+        content_parts = []
+        
+        if activity_type == 'email':
+            subject = (activity.get('subject') or '').strip()
+            body = (activity.get('body') or '').strip()
+            
+            if subject:
+                content_parts.append(f"Subject: {subject}")
+            if body:
+                content_parts.append(f"Body: {body}")
+        
+        elif activity_type == 'call':
+            title = (activity.get('call_title') or '').strip()
+            body = (activity.get('call_body') or '').strip()
+            
+            if title:
+                content_parts.append(f"Call: {title}")
+            if body:
+                content_parts.append(f"Notes: {body}")
+        
+        elif activity_type == 'meeting':
+            title = (activity.get('meeting_title') or '').strip()
+            notes = (activity.get('internal_meeting_notes') or '').strip()
+            
+            if title:
+                content_parts.append(f"Meeting: {title}")
+            if notes:
+                content_parts.append(f"Notes: {notes}")
+        
+        elif activity_type == 'note':
+            body = (activity.get('note_body') or '').strip()
+            if body:
+                content_parts.append(f"Note: {body}")
+        
+        elif activity_type == 'task':
+            subject = (activity.get('task_subject') or '').strip()
+            body = (activity.get('task_body') or '').strip()
+            
+            if subject:
+                content_parts.append(f"Task: {subject}")
+            if body:
+                content_parts.append(f"Details: {body}")
+        
+        return '\n'.join(content_parts)
+    
+    def _extract_activity_timestamp(self, activity: Dict[str, Any]) -> Optional[datetime]:
+        """Extract timestamp from activity"""
+        
+        activity_type = activity.get('activity_type', 'unknown')
+        
+        # Define timestamp fields for each activity type
+        timestamp_fields = {
             'email': 'sent_at',
             'call': 'createdate',
-            'note': 'lastmodifieddate',
             'meeting': 'meeting_start_time',
+            'note': 'lastmodifieddate',
             'task': 'createdate'
         }
         
-        # Extract content based on activity type
-        content_parts = []
+        timestamp_field = timestamp_fields.get(activity_type, 'createdate')
+        timestamp_str = activity.get(timestamp_field)
         
-        if activity['activity_type'] == 'email':
-            if activity.get('subject'):
-                content_parts.append(f"Subject: {activity['subject']}")
-            if activity.get('body'):
-                # Clean up the body text
-                body = activity['body'].strip()
-                if body:
-                    content_parts.append(f"Body: {body}")
-                
-        elif activity['activity_type'] == 'note':
-            if activity.get('note_body'):
-                note_body = activity['note_body'].strip()
-                if note_body:
-                    content_parts.append(f"Note: {note_body}")
-                
-        elif activity['activity_type'] == 'task':
-            if activity.get('task_subject'):
-                task_subject = activity['task_subject'].strip()
-                if task_subject:
-                    content_parts.append(f"Task: {task_subject}")
-            if activity.get('task_body'):
-                task_body = activity['task_body'].strip()
-                if task_body:
-                    content_parts.append(f"Details: {task_body}")
-                
-        elif activity['activity_type'] == 'call':
-            if activity.get('call_title'):
-                call_title = activity['call_title'].strip()
-                if call_title:
-                    content_parts.append(f"Call: {call_title}")
-            if activity.get('call_body'):
-                call_body = activity['call_body'].strip()
-                if call_body:
-                    content_parts.append(f"Notes: {call_body}")
-                
-        elif activity['activity_type'] == 'meeting':
-            if activity.get('meeting_title'):
-                meeting_title = activity['meeting_title'].strip()
-                if meeting_title:
-                    content_parts.append(f"Meeting: {meeting_title}")
-            if activity.get('internal_meeting_notes'):
-                meeting_notes = activity['internal_meeting_notes'].strip()
-                if meeting_notes:
-                    content_parts.append(f"Notes: {meeting_notes}")
+        if not timestamp_str:
+            return None
         
-        # Create combined content, return empty if no meaningful content
-        combined_content = " | ".join(content_parts) if content_parts else ""
+        try:
+            # Handle timezone - if no timezone, assume UTC
+            if timestamp_str.endswith('Z'):
+                return datetime.fromisoformat(timestamp_str[:-1] + '+00:00')
+            elif '+' in timestamp_str or timestamp_str.count('-') > 2:
+                return datetime.fromisoformat(timestamp_str)
+            else:
+                # No timezone info, assume UTC
+                return datetime.fromisoformat(timestamp_str + '+00:00')
+        except:
+            logger.warning(f"Could not parse timestamp: {timestamp_str}")
+            return None
+    
+    def _calculate_deal_metrics(self, activities: List[ProcessedActivity], deal_data: Dict[str, Any]) -> DealMetrics:
+        """Calculate comprehensive metrics for a deal"""
         
-        # Parse timestamp using correct field for activity type
-        timestamp = None
-        activity_type = activity['activity_type']
-        date_field = DATE_FIELDS.get(activity_type)
+        deal_id = deal_data.get('deal_id', 'unknown')
         
-        if date_field and activity.get(date_field):
-            timestamp_value = activity[date_field]
-            # Handle null timestamps
-            if timestamp_value is not None:
-                try:
-                    # Handle different timestamp formats
-                    if isinstance(timestamp_value, str):
-                        if timestamp_value.endswith('Z'):
-                            timestamp = datetime.fromisoformat(timestamp_value.replace('Z', '+00:00'))
-                        else:
-                            timestamp = datetime.fromisoformat(timestamp_value)
-                except Exception as e:
-                    logger.warning(f"Could not parse timestamp '{timestamp_value}' for activity type '{activity_type}' in deal {deal_id}: {e}")
+        # Basic counts
+        total_activities = len(activities)
+        activity_type_counts = {}
         
-        # Extract metadata
-        metadata = {
-            'direction': activity.get('direction') or '',
-            'status': activity.get('task_status') or activity.get('call_status') or '',
-            'priority': activity.get('task_priority') or '',
-            'duration': activity.get('call_duration') or 0,
-            'participants': activity.get('to', []),
-            'raw_activity': activity  # Keep original for reference
-        }
+        for activity in activities:
+            activity_type = activity.activity_type
+            activity_type_counts[activity_type] = activity_type_counts.get(activity_type, 0) + 1
         
-        return ProcessedActivity(
+        # Time span calculation
+        timestamps = [a.timestamp for a in activities if a.timestamp]
+        if timestamps:
+            timestamps.sort()
+            time_span = (timestamps[-1] - timestamps[0]).days
+        else:
+            time_span = 0
+        
+        # Calculate average time between activities
+        avg_time_between_activities_hours = 0.0
+        if len(timestamps) > 1:
+            total_hours = sum(
+                (timestamps[i] - timestamps[i-1]).total_seconds() / 3600 
+                for i in range(1, len(timestamps))
+            )
+            avg_time_between_activities_hours = total_hours / (len(timestamps) - 1)
+        
+        # Calculate response time metrics
+        response_time_metrics = self._calculate_response_times(activities)
+        
+        # Calculate communication gaps (periods > 7 days without activity)
+        communication_gaps_count = 0
+        for i in range(1, len(timestamps)):
+            gap_days = (timestamps[i] - timestamps[i-1]).days
+            if gap_days > 7:
+                communication_gaps_count += 1
+        
+        # Calculate business hours ratio
+        business_hours_ratio = self._calculate_business_hours_ratio(activities)
+        
+        # Calculate weekend activity ratio
+        weekend_activity_ratio = self._calculate_weekend_ratio(activities)
+        
+        # Determine activity frequency trend
+        activity_frequency_trend = self._calculate_frequency_trend(activities)
+        
+        # Calculate email ratio
+        email_ratio = activity_type_counts.get('email', 0) / max(total_activities, 1)
+        
+        return DealMetrics(
             deal_id=deal_id,
-            activity_type=activity['activity_type'],
-            timestamp=timestamp,
-            content=combined_content,
-            direction=activity.get('direction'),
-            metadata=metadata
+            total_activities=total_activities,
+            activity_type_counts=activity_type_counts,
+            time_span_days=time_span,
+            avg_time_between_activities_hours=avg_time_between_activities_hours,
+            response_time_metrics=response_time_metrics,
+            communication_gaps_count=communication_gaps_count,
+            business_hours_ratio=business_hours_ratio,
+            weekend_activity_ratio=weekend_activity_ratio,
+            activity_frequency_trend=activity_frequency_trend,
+            email_ratio=email_ratio
         )
     
-    def calculate_time_metrics(self, activities: List[ProcessedActivity]) -> Dict[str, Any]:
-        """Calculate detailed time-based metrics from activities"""
-        
-        # Sort activities by timestamp - only include those with valid timestamps
-        timestamped_activities = [a for a in activities if a.timestamp is not None]
-        timestamped_activities.sort(key=lambda x: x.timestamp)
-        
-        # Default return for insufficient data
-        default_response = {
-            'avg_time_between_activities_hours': 0,
-            'min_time_gap_hours': 0,
-            'max_time_gap_hours': 0,
-            'response_time_metrics': {
-                'avg_response_time_hours': 0,
-                'fastest_response_hours': 0,
-                'slowest_response_hours': 0,
-                'response_count': 0
-            },
-            'activity_frequency_trend': 'insufficient_data',
-            'communication_gaps': [],
-            'communication_gaps_count': 0,
-            'business_hours_ratio': 0,
-            'weekend_activity_ratio': 0,
-            'total_time_gaps': 0
-        }
-        
-        if len(timestamped_activities) < 2:
-            return default_response
-        
-        # Calculate time gaps between consecutive activities
-        time_gaps_hours = []
-        for i in range(1, len(timestamped_activities)):
-            gap = (timestamped_activities[i].timestamp - timestamped_activities[i-1].timestamp).total_seconds() / 3600
-            time_gaps_hours.append(gap)
-        
-        # Calculate response time patterns (outgoing email responses to incoming)
+    def _calculate_response_times(self, activities: List[ProcessedActivity]) -> Dict[str, float]:
+        """Calculate response time metrics"""
         response_times = []
-        email_activities = [a for a in timestamped_activities if a.activity_type == 'email']
         
-        for i, email in enumerate(email_activities):
-            if email.direction == 'outgoing' and i > 0:
-                # Find the previous incoming email
-                prev_incoming = None
-                for j in range(i-1, -1, -1):
-                    if email_activities[j].direction == 'incoming':
-                        prev_incoming = email_activities[j]
-                        break
-                
-                if prev_incoming:
-                    response_time = (email.timestamp - prev_incoming.timestamp).total_seconds() / 3600
-                    response_times.append(response_time)
+        # Sort activities by timestamp
+        sorted_activities = sorted(
+            [a for a in activities if a.timestamp], 
+            key=lambda x: x.timestamp
+        )
         
-        # Identify communication gaps (> 7 days between activities)
-        communication_gaps = []
-        for i, gap_hours in enumerate(time_gaps_hours):
-            if gap_hours > 168:  # 7 days
-                gap_info = {
-                    'start_date': timestamped_activities[i].timestamp.isoformat(),
-                    'end_date': timestamped_activities[i+1].timestamp.isoformat(),
-                    'gap_days': gap_hours / 24
-                }
-                communication_gaps.append(gap_info)
+        for i in range(1, len(sorted_activities)):
+            current = sorted_activities[i]
+            previous = sorted_activities[i-1]
+            
+            # Calculate response time if direction changes (indicating a response)
+            if (current.direction != previous.direction and 
+                current.direction in ['incoming', 'outgoing']):
+                response_time_hours = (current.timestamp - previous.timestamp).total_seconds() / 3600
+                response_times.append(response_time_hours)
         
-        # Calculate business hours activity ratio
+        if response_times:
+            return {
+                'avg_response_time_hours': sum(response_times) / len(response_times),
+                'min_response_time_hours': min(response_times),
+                'max_response_time_hours': max(response_times)
+            }
+        else:
+            return {'avg_response_time_hours': 0, 'min_response_time_hours': 0, 'max_response_time_hours': 0}
+    
+    def _calculate_business_hours_ratio(self, activities: List[ProcessedActivity]) -> float:
+        """Calculate ratio of activities during business hours (9 AM - 5 PM weekdays)"""
         business_hours_count = 0
-        weekend_count = 0
         
-        for activity in timestamped_activities:
-            # Business hours: 9 AM to 6 PM, Monday to Friday
-            if activity.timestamp.weekday() < 5:  # Monday = 0, Friday = 4
-                if 9 <= activity.timestamp.hour <= 18:
-                    business_hours_count += 1
-            else:  # Weekend
-                weekend_count += 1
-        
-        total_activities = len(timestamped_activities)
-        business_hours_ratio = business_hours_count / total_activities if total_activities > 0 else 0
-        weekend_activity_ratio = weekend_count / total_activities if total_activities > 0 else 0
-        
-        # Activity frequency trend (first half vs second half)
-        mid_point = len(timestamped_activities) // 2
-        if mid_point > 0:
-            first_half = timestamped_activities[:mid_point]
-            second_half = timestamped_activities[mid_point:]
-            
-            if len(first_half) > 1 and len(second_half) > 1:
-                first_half_days = (first_half[-1].timestamp - first_half[0].timestamp).days or 1
-                second_half_days = (second_half[-1].timestamp - second_half[0].timestamp).days or 1
-                
-                first_half_frequency = len(first_half) / first_half_days
-                second_half_frequency = len(second_half) / second_half_days
-                
-                if second_half_frequency > first_half_frequency * 1.2:
-                    frequency_trend = 'accelerating'
-                elif second_half_frequency < first_half_frequency * 0.8:
-                    frequency_trend = 'declining'
-                else:
-                    frequency_trend = 'stable'
-            else:
-                frequency_trend = 'insufficient_data'
-        else:
-            frequency_trend = 'insufficient_data'
-        
-        return {
-            'avg_time_between_activities_hours': sum(time_gaps_hours) / len(time_gaps_hours) if time_gaps_hours else 0,
-            'min_time_gap_hours': min(time_gaps_hours) if time_gaps_hours else 0,
-            'max_time_gap_hours': max(time_gaps_hours) if time_gaps_hours else 0,
-            'response_time_metrics': {
-                'avg_response_time_hours': sum(response_times) / len(response_times) if response_times else 0,
-                'fastest_response_hours': min(response_times) if response_times else 0,
-                'slowest_response_hours': max(response_times) if response_times else 0,
-                'response_count': len(response_times)
-            },
-            'activity_frequency_trend': frequency_trend,
-            'communication_gaps': communication_gaps,
-            'communication_gaps_count': len(communication_gaps),
-            'business_hours_ratio': business_hours_ratio,
-            'weekend_activity_ratio': weekend_activity_ratio,
-            'total_time_gaps': len(time_gaps_hours)
-        }
-    
-    def categorize_deal_size(self, amount: float, all_amounts: List[float]) -> str:
-        """Categorize deal size based on percentiles of all deals"""
-        if amount <= 0:
-            return 'unknown'
-        
-        if not all_amounts:
-            return 'unknown'
-        
-        # Filter out zero amounts for percentile calculation
-        valid_amounts = [a for a in all_amounts if a > 0]
-        if not valid_amounts:
-            return 'unknown'
-        
-        valid_amounts.sort()
-        n = len(valid_amounts)
-        
-        # Calculate percentiles safely
-        p25_idx = max(0, int(n * 0.25) - 1)
-        p50_idx = max(0, int(n * 0.50) - 1)
-        p75_idx = max(0, int(n * 0.75) - 1)
-        
-        p25 = valid_amounts[p25_idx]
-        p50 = valid_amounts[p50_idx]
-        p75 = valid_amounts[p75_idx]
-        
-        if amount <= p25:
-            return 'small'
-        elif amount <= p50:
-            return 'medium'
-        elif amount <= p75:
-            return 'large'
-        else:
-            return 'enterprise'
-    
-    def categorize_probability(self, probability: float) -> str:
-        """Categorize probability - these can be universal ranges"""
-        if probability >= 80:
-            return 'high'
-        elif probability >= 60:
-            return 'medium_high'
-        elif probability >= 40:
-            return 'medium'
-        elif probability >= 20:
-            return 'low'
-        else:
-            return 'very_low'
-    
-    def extract_deal_characteristics(self, deal_data: Dict[str, Any], all_deals_data: List[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Extract and process deal characteristics from HubSpot data"""
-        
-        # Parse deal amount
-        amount = 0.0
-        if deal_data.get('amount'):
-            try:
-                amount = float(deal_data['amount'])
-            except (ValueError, TypeError):
-                amount = 0.0
-        
-        # Parse deal stage probability
-        probability = 0.0
-        if deal_data.get('deal_stage_probability'):
-            try:
-                probability = float(deal_data['deal_stage_probability'])
-            except (ValueError, TypeError):
-                probability = 0.0
-        
-        # Parse dates
-        create_date = None
-        close_date = None
-        
-        if deal_data.get('createdate'):
-            try:
-                create_date = datetime.fromisoformat(deal_data['createdate'].replace('Z', '+00:00'))
-            except Exception as e:
-                logger.warning(f"Could not parse createdate: {e}")
-        
-        if deal_data.get('closedate'):
-            try:
-                close_date = datetime.fromisoformat(deal_data['closedate'].replace('Z', '+00:00'))
-            except Exception as e:
-                logger.warning(f"Could not parse closedate: {e}")
-        
-        # Calculate deal lifecycle metrics
-        deal_age_days = 0
-        if create_date:
-            current_time = datetime.now(create_date.tzinfo)
-            deal_age_days = (current_time - create_date).days
-        
-        # Determine deal outcome category
-        dealstage = deal_data.get('dealstage', '').lower()
-        if 'closed won' in dealstage or 'won' in dealstage:
-            outcome = 'won'
-        elif 'closed lost' in dealstage or 'lost' in dealstage:
-            outcome = 'lost'
-        else:
-            outcome = 'open'
-        
-        # Get all amounts for relative categorization
-        all_amounts = []
-        if all_deals_data:
-            for deal in all_deals_data:
-                try:
-                    deal_amount = float(deal.get('amount', 0))
-                    if deal_amount > 0:
-                        all_amounts.append(deal_amount)
-                except (ValueError, TypeError):
-                    continue
-        
-        # Categorize deal size based on data distribution
-        deal_size_category = self.categorize_deal_size(amount, all_amounts)
-        
-        # Categorize probability
-        prob_category = self.categorize_probability(probability)
-        
-        return {
-            # Raw deal data
-            'deal_amount': amount,
-            'deal_stage': deal_data.get('dealstage') or '',
-            'deal_probability': probability,
-            'deal_type': deal_data.get('dealtype') or '',
-            'deal_outcome': outcome,
-            
-            # Processed categories
-            'deal_size_category': deal_size_category,
-            'probability_category': prob_category,
-            
-            # Date information
-            'create_date': create_date.isoformat() if create_date else '',
-            'close_date': close_date.isoformat() if close_date else '',
-            'deal_age_days': deal_age_days,
-            
-            # Lifecycle metrics
-            'is_closed': outcome in ['won', 'lost'],
-            'is_won': outcome == 'won',
-            'is_lost': outcome == 'lost',
-            'is_open': outcome == 'open',
-            
-            # Business logic flags
-            'is_new_business': deal_data.get('dealtype', '').lower() == 'newbusiness',
-            'has_amount': amount > 0,
-            'high_probability': probability >= 70,
-            'low_probability': probability <= 30
-        }
-    
-    def process_deal(self, deal_data: Dict[str, Any], all_deals_data: List[Dict[str, Any]] = None) -> DealPattern:
-        """Process a complete deal into a pattern for vector storage"""
-        
-        deal_id = str(deal_data['deal_id'])
-        activities = []
-        
-        # Process each activity
-        for activity in deal_data['activities']:
-            try:
-                processed_activity = self.parse_activity(activity, deal_id)
-                # Only add activities with valid content (not empty or "No content")
-                if (processed_activity.content and 
-                    processed_activity.content.strip() and 
-                    processed_activity.content != "No content"):
-                    activities.append(processed_activity)
-                else:
-                    logger.debug(f"Skipping activity with no content in deal {deal_id}: {activity.get('activity_type', 'unknown')}")
-            except Exception as e:
-                logger.warning(f"Error processing activity in deal {deal_id}: {e}")
-                continue
-        
-        if not activities:
-            raise ValueError(f"No valid activities found for deal {deal_id}")
-        
-        # Extract deal characteristics
-        deal_characteristics = self.extract_deal_characteristics(deal_data, all_deals_data)
-        
-        # Combine all activities into searchable text - handle activities without timestamps
-        combined_text_parts = []
         for activity in activities:
             if activity.timestamp:
-                timestamp_str = activity.timestamp.strftime("%Y-%m-%d")
-            else:
-                timestamp_str = "Unknown date"
-            activity_text = f"[{timestamp_str}] {activity.activity_type.upper()}: {activity.content}"
-            combined_text_parts.append(activity_text)
+                # Convert to local time (assuming UTC stored)
+                hour = activity.timestamp.hour
+                weekday = activity.timestamp.weekday()  # 0=Monday, 6=Sunday
+                
+                if weekday < 5 and 9 <= hour <= 17:  # Weekdays 9 AM - 5 PM
+                    business_hours_count += 1
         
-        combined_text = "\n".join(combined_text_parts)
+        return business_hours_count / max(len(activities), 1)
+    
+    def _calculate_weekend_ratio(self, activities: List[ProcessedActivity]) -> float:
+        """Calculate ratio of activities during weekends"""
+        weekend_count = 0
         
-        # Calculate time span - only for activities with timestamps
-        timestamps = [a.timestamp for a in activities if a.timestamp is not None]
-        time_span_days = 0
-        if len(timestamps) > 1:
-            time_span_days = (max(timestamps) - min(timestamps)).days
+        for activity in activities:
+            if activity.timestamp:
+                weekday = activity.timestamp.weekday()  # 0=Monday, 6=Sunday
+                if weekday >= 5:  # Saturday (5) or Sunday (6)
+                    weekend_count += 1
         
-        # Calculate detailed time metrics
-        time_metrics = self.calculate_time_metrics(activities)
+        return weekend_count / max(len(activities), 1)
+    
+    def _calculate_frequency_trend(self, activities: List[ProcessedActivity]) -> str:
+        """Calculate activity frequency trend"""
+        timestamps = [a.timestamp for a in activities if a.timestamp]
         
-        # Extract activity patterns
-        activity_types = [a.activity_type for a in activities]
-        activity_type_counts = {
-            'email': activity_types.count('email'),
-            'call': activity_types.count('call'),
-            'meeting': activity_types.count('meeting'),
-            'note': activity_types.count('note'),
-            'task': activity_types.count('task')
-        }
+        if len(timestamps) < 4:
+            return "insufficient_data"
         
-        # Calculate engagement metrics
-        outgoing_emails = len([a for a in activities if a.activity_type == 'email' and a.direction == 'outgoing'])
-        incoming_emails = len([a for a in activities if a.activity_type == 'email' and a.direction == 'incoming'])
+        timestamps.sort()
         
-        # Combine all metadata
-        metadata = {
-            # Activity metrics
-            'activities_count': len(activities),
-            'time_span_days': time_span_days,
-            'activity_types': activity_type_counts,
-            'outgoing_emails': outgoing_emails,
-            'incoming_emails': incoming_emails,
-            'email_ratio': outgoing_emails / max(incoming_emails, 1),  # Avoid division by zero
-            'last_activity_date': max(timestamps).isoformat() if timestamps else '',
-            'first_activity_date': min(timestamps).isoformat() if timestamps else '',
-            
-            # Deal characteristics (new)
-            **deal_characteristics,
-            
-            # Time metrics
-            **time_metrics
-        }
+        # Split into first half and second half
+        mid_point = len(timestamps) // 2
+        first_half = timestamps[:mid_point]
+        second_half = timestamps[mid_point:]
         
-        return DealPattern(
-            deal_id=deal_id,
-            combined_text=combined_text,
-            activities_count=len(activities),
-            activity_types=list(set(activity_types)),
-            time_span_days=time_span_days,
-            metadata=metadata
+        # Calculate activity density (activities per day)
+        first_half_days = (first_half[-1] - first_half[0]).days + 1
+        second_half_days = (second_half[-1] - second_half[0]).days + 1
+        
+        first_half_density = len(first_half) / first_half_days
+        second_half_density = len(second_half) / second_half_days
+        
+        # Determine trend
+        if second_half_density > first_half_density * 1.2:
+            return "accelerating"
+        elif second_half_density < first_half_density * 0.8:
+            return "declining"
+        else:
+            return "stable"
+    
+    def _extract_deal_characteristics(self, deal_data: Dict[str, Any], deal_metrics: DealMetrics) -> DealCharacteristics:
+        """Extract deal characteristics from your deal structure"""
+        
+        # logger.info(f"Deal : {deal_data}")
+        # Extract directly from deal_data (your actual structure)
+        deal_amount = self._safe_float(deal_data.get('amount', 0))
+        deal_stage = str(deal_data.get('dealstage', 'unknown'))
+        deal_type = str(deal_data.get('dealtype', 'unknown'))
+        deal_probability = self._safe_float(deal_data.get('deal_stage_probability', 0))
+        
+        # Determine outcome from deal stage
+        deal_outcome = self._determine_outcome(deal_stage)
+        
+        # Extract dates
+        create_date = deal_data.get('createdate', '')
+        close_date = deal_data.get('closedate', '')
+        
+        # Calculate deal age
+        deal_age_days = deal_metrics.time_span_days
+        
+        # Determine deal status
+        is_closed = deal_outcome in ['won', 'lost']
+        is_won = deal_outcome == 'won'
+        is_lost = deal_outcome == 'lost'
+        is_open = not is_closed
+        is_new_business = deal_type == 'newbusiness'
+        
+        # Dynamic deal size categorization based on amount distribution
+        deal_size_category = self._categorize_deal_size(deal_amount)
+        
+        # Categorize probability
+        if deal_probability >= 0.8:
+            probability_category = 'high'
+        elif deal_probability >= 0.5:
+            probability_category = 'medium'
+        else:
+            probability_category = 'low'
+        
+        return DealCharacteristics(
+            deal_id=deal_metrics.deal_id,
+            deal_amount=deal_amount,
+            deal_stage=deal_stage,
+            deal_type=deal_type,
+            deal_probability=deal_probability,
+            deal_outcome=deal_outcome,
+            deal_size_category=deal_size_category,
+            probability_category=probability_category,
+            create_date=create_date,
+            close_date=close_date,
+            deal_age_days=deal_age_days,
+            is_closed=is_closed,
+            is_won=is_won,
+            is_lost=is_lost,
+            is_open=is_open,
+            is_new_business=is_new_business
         )
     
-    def process_all_deals(self, file_path: str) -> List[DealPattern]:
-        """Process all deals from file and create embeddings"""
+    def _determine_outcome(self, deal_stage: str) -> str:
+        """Determine deal outcome from stage"""
+        stage_lower = deal_stage.lower()
         
-        # Load data
-        deals_data = self.load_deal_data(file_path)
+        if 'won' in stage_lower or 'closed won' in stage_lower:
+            return 'won'
+        elif 'lost' in stage_lower or 'closed lost' in stage_lower:
+            return 'lost'
+        elif 'closed' in stage_lower:
+            return 'closed'
+        else:
+            return 'open'
+    
+    def _categorize_deal_size(self, amount: float) -> str:
+        """Categorize deal size dynamically"""
+        if amount <= 0:
+            return 'unknown'
+        elif amount < 10000:
+            return 'small'
+        elif amount < 50000:
+            return 'medium'
+        else:
+            return 'large'
+    
+    def _create_combined_text(self, activities: List[ProcessedActivity]) -> str:
+        """Create combined text from activities"""
+        
+        text_parts = []
+        
+        for activity in activities:
+            if activity.content.strip():
+                text_parts.append(f"[{activity.activity_type.upper()}] {activity.content}")
+        
+        return '\n'.join(text_parts)
+    
+    def _safe_float(self, value: Any) -> float:
+        """Safely convert value to float"""
+        try:
+            return float(value) if value is not None else 0.0
+        except (ValueError, TypeError):
+            return 0.0
+    
+    def process_batch(self, deals_data: List[Dict[str, Any]]) -> List[ProcessedDealData]:
+        """Process multiple deals in batch"""
+        
         processed_deals = []
-        
-        logger.info(f"Processing {len(deals_data)} deals...")
         
         for deal_data in deals_data:
             try:
-                # Process deal with all deals data for relative categorization
-                deal_pattern = self.process_deal(deal_data, deals_data)
-                
-                # Create embedding using the injected service
-                logger.info(f"Creating embedding for deal {deal_pattern.deal_id}")
-                deal_pattern.embedding = self.embedding_service.encode(deal_pattern.combined_text)
-                
-                processed_deals.append(deal_pattern)
-                logger.info(f"Successfully processed deal {deal_pattern.deal_id}")
-                
+                processed_deal = self.process_deal(deal_data)
+                processed_deals.append(processed_deal)
             except Exception as e:
                 logger.error(f"Error processing deal {deal_data.get('deal_id', 'unknown')}: {e}")
                 continue
         
-        logger.info(f"Successfully processed {len(processed_deals)} deals")
         return processed_deals
-    # Additional helper functions to add to data_processor.py
-# These can be added to the DealDataProcessor class
-
-def _extract_activity_content_enhanced(self, activity: Dict[str, Any]) -> str:
-    """
-    Enhanced content extraction that handles the exact structure from your data
-    """
-    activity_type = activity.get('activity_type', '')
-    content_parts = []
-    
-    if activity_type == 'email':
-        # Handle email activities
-        if activity.get('subject'):
-            content_parts.append(f"Subject: {activity['subject']}")
-        if activity.get('body'):
-            body = activity['body'].strip()
-            if body and body != "No content":
-                content_parts.append(f"Body: {body}")
-        # Include direction and state info
-        if activity.get('direction'):
-            content_parts.append(f"Direction: {activity['direction']}")
-        if activity.get('state'):
-            content_parts.append(f"State: {activity['state']}")
-            
-    elif activity_type == 'call':
-        # Handle call activities
-        if activity.get('call_title'):
-            content_parts.append(f"Call: {activity['call_title']}")
-        if activity.get('call_body'):
-            body = activity['call_body'].strip()
-            if body:
-                content_parts.append(f"Notes: {body}")
-        if activity.get('call_direction'):
-            content_parts.append(f"Direction: {activity['call_direction']}")
-        if activity.get('call_status'):
-            content_parts.append(f"Status: {activity['call_status']}")
-        if activity.get('call_duration'):
-            content_parts.append(f"Duration: {activity['call_duration']} minutes")
-            
-    elif activity_type == 'meeting':
-        # Handle meeting activities
-        if activity.get('meeting_title'):
-            content_parts.append(f"Meeting: {activity['meeting_title']}")
-        if activity.get('internal_meeting_notes'):
-            notes = activity['internal_meeting_notes'].strip()
-            if notes:
-                content_parts.append(f"Notes: {notes}")
-        if activity.get('meeting_location'):
-            content_parts.append(f"Location: {activity['meeting_location']}")
-        if activity.get('meeting_outcome'):
-            content_parts.append(f"Outcome: {activity['meeting_outcome']}")
-            
-    elif activity_type == 'note':
-        # Handle note activities
-        if activity.get('note_body'):
-            body = activity['note_body'].strip()
-            if body:
-                content_parts.append(f"Note: {body}")
-                
-    elif activity_type == 'task':
-        # Handle task activities
-        if activity.get('task_subject'):
-            content_parts.append(f"Task: {activity['task_subject']}")
-        if activity.get('task_body'):
-            body = activity['task_body'].strip()
-            if body:
-                content_parts.append(f"Details: {body}")
-        if activity.get('task_status'):
-            content_parts.append(f"Status: {activity['task_status']}")
-        if activity.get('task_priority'):
-            content_parts.append(f"Priority: {activity['task_priority']}")
-    
-    return " | ".join(content_parts) if content_parts else ""
-
-def _get_activity_timestamp_enhanced(self, activity: Dict[str, Any]) -> Optional[datetime]:
-    """
-    Enhanced timestamp extraction for your exact data structure
-    """
-    activity_type = activity.get('activity_type', '')
-    timestamp_field = None
-    
-    # Map activity types to their timestamp fields
-    timestamp_mapping = {
-        'email': 'sent_at',
-        'call': 'createdate',
-        'meeting': 'meeting_start_time',
-        'note': 'lastmodifieddate',  # Use lastmodifieddate for notes, fallback to createdate
-        'task': 'createdate'
-    }
-    
-    timestamp_field = timestamp_mapping.get(activity_type)
-    
-    # For notes, try lastmodifieddate first, then createdate
-    if activity_type == 'note':
-        timestamp_value = activity.get('lastmodifieddate') or activity.get('createdate')
-    else:
-        timestamp_value = activity.get(timestamp_field)
-    
-    if timestamp_value:
-        try:
-            # Handle different timestamp formats
-            if isinstance(timestamp_value, str):
-                if timestamp_value.endswith('Z'):
-                    return datetime.fromisoformat(timestamp_value.replace('Z', '+00:00'))
-                else:
-                    return datetime.fromisoformat(timestamp_value)
-        except Exception as e:
-            logger.warning(f"Could not parse timestamp '{timestamp_value}' for activity type '{activity_type}': {e}")
-    
-    return None
-
-def _create_activity_metadata_enhanced(self, activity: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Create enhanced metadata for activities based on your data structure
-    """
-    activity_type = activity.get('activity_type', '')
-    metadata = {
-        'activity_id': activity.get('id'),
-        'raw_activity': activity  # Keep original for reference
-    }
-    
-    if activity_type == 'email':
-        metadata.update({
-            'direction': activity.get('direction'),
-            'state': activity.get('state'),
-            'from_email': activity.get('from'),
-            'to_emails': activity.get('to', []),
-            'has_subject': bool(activity.get('subject')),
-            'has_body': bool(activity.get('body'))
-        })
-        
-    elif activity_type == 'call':
-        metadata.update({
-            'call_direction': activity.get('call_direction'),
-            'call_status': activity.get('call_status'),
-            'call_duration': activity.get('call_duration'),
-            'has_title': bool(activity.get('call_title')),
-            'has_notes': bool(activity.get('call_body'))
-        })
-        
-    elif activity_type == 'meeting':
-        metadata.update({
-            'meeting_outcome': activity.get('meeting_outcome'),
-            'meeting_location': activity.get('meeting_location'),
-            'meeting_location_type': activity.get('meeting_location_type'),
-            'has_title': bool(activity.get('meeting_title')),
-            'has_notes': bool(activity.get('internal_meeting_notes')),
-            'has_start_time': bool(activity.get('meeting_start_time')),
-            'has_end_time': bool(activity.get('meeting_end_time'))
-        })
-        
-    elif activity_type == 'note':
-        metadata.update({
-            'has_body': bool(activity.get('note_body')),
-            'last_modified': activity.get('lastmodifieddate'),
-            'created': activity.get('createdate')
-        })
-        
-    elif activity_type == 'task':
-        metadata.update({
-            'task_status': activity.get('task_status'),
-            'task_priority': activity.get('task_priority'),
-            'task_type': activity.get('task_type'),
-            'has_subject': bool(activity.get('task_subject')),
-            'has_body': bool(activity.get('task_body'))
-        })
-    
-    return metadata
-
-def validate_activity_structure(self, activity: Dict[str, Any]) -> Tuple[bool, List[str]]:
-    """
-    Validate activity structure matches expected format
-    """
-    errors = []
-    
-    # Check required fields
-    if 'activity_type' not in activity:
-        errors.append("Missing required field: activity_type")
-        return False, errors
-    
-    activity_type = activity['activity_type']
-    
-    # Validate activity type
-    valid_types = ['email', 'call', 'meeting', 'note', 'task']
-    if activity_type not in valid_types:
-        errors.append(f"Invalid activity_type: {activity_type}")
-    
-    # Type-specific validation
-    if activity_type == 'email':
-        if not any([activity.get('subject'), activity.get('body')]):
-            errors.append("Email activity must have either subject or body")
-            
-    elif activity_type == 'call':
-        if not any([activity.get('call_title'), activity.get('call_body')]):
-            errors.append("Call activity must have either call_title or call_body")
-            
-    elif activity_type == 'meeting':
-        if not activity.get('meeting_title'):
-            errors.append("Meeting activity must have meeting_title")
-            
-    elif activity_type == 'note':
-        if not activity.get('note_body'):
-            errors.append("Note activity must have note_body")
-            
-    elif activity_type == 'task':
-        if not activity.get('task_subject'):
-            errors.append("Task activity must have task_subject")
-    
-    return len(errors) == 0, errors
-
-# Usage example - these methods would be added to the DealDataProcessor class
-# and used in the parse_activity method like this:
-
-def parse_activity_enhanced(self, activity: Dict[str, Any], deal_id: str) -> ProcessedActivity:
-    """Enhanced activity parsing using the new helper methods"""
-    
-    # Validate activity structure first
-    is_valid, validation_errors = self.validate_activity_structure(activity)
-    if not is_valid:
-        logger.warning(f"Activity validation failed for deal {deal_id}: {validation_errors}")
-        # Could choose to skip invalid activities or create a minimal version
-    
-    # Extract content using enhanced method
-    content = self._extract_activity_content_enhanced(activity)
-    
-    # Get timestamp using enhanced method
-    timestamp = self._get_activity_timestamp_enhanced(activity)
-    
-    # Create enhanced metadata
-    metadata = self._create_activity_metadata_enhanced(activity)
-    
-    return ProcessedActivity(
-        deal_id=deal_id,
-        activity_type=activity['activity_type'],
-        timestamp=timestamp,
-        content=content,
-        direction=activity.get('direction'),
-        metadata=metadata
-    )
-
-
-# Example usage and testing
-def main():
-    """Example usage of the DealDataProcessor"""
-    from core.embedding_service import get_embedding_service
-    from core.vector_store import get_vector_store
-    from config.settings import settings
-    from utils.logging_config import setup_logging
-    
-    # Setup logging
-    logger = setup_logging()
-    
-    # Initialize services
-    embedding_service = get_embedding_service()
-    vector_store = get_vector_store()
-    
-    # Initialize processor
-    processor = DealDataProcessor(embedding_service=embedding_service)
-    
-    # Process your sample data
-    file_path = settings.DATA_PATH
-    
-    try:
-        # Process all deals
-        processed_deals = processor.process_all_deals(file_path)
-        
-        # Print summary
-        print(f"\n{'='*50}")
-        print("PROCESSING SUMMARY")
-        print(f"{'='*50}")
-        print(f"Total deals processed: {len(processed_deals)}")
-        
-        for deal in processed_deals:
-            print(f"\nDeal ID: {deal.deal_id}")
-            print(f"Outcome: {deal.metadata['deal_outcome']}")
-            print(f"Amount: ${deal.metadata['deal_amount']:,.2f} ({deal.metadata['deal_size_category']})")
-            print(f"Stage: {deal.metadata['deal_stage']}")
-            print(f"Probability: {deal.metadata['deal_probability']:.1f}% ({deal.metadata['probability_category']})")
-            print(f"Type: {deal.metadata['deal_type']}")
-            print(f"Age: {deal.metadata['deal_age_days']} days")
-            print(f"Activities: {deal.activities_count}")
-            print(f"Time span: {deal.time_span_days} days")
-            print(f"Activity types: {', '.join(deal.activity_types)}")
-            print(f"Embedding dimension: {len(deal.embedding)}")
-            print(f"Email ratio (out/in): {deal.metadata['email_ratio']:.2f}")
-            print(f"Avg time between activities: {deal.metadata['avg_time_between_activities_hours']:.1f} hours")
-            print(f"Avg response time: {deal.metadata['response_time_metrics']['avg_response_time_hours']:.1f} hours")
-            print(f"Communication gaps: {deal.metadata['communication_gaps_count']}")
-            print(f"Activity trend: {deal.metadata['activity_frequency_trend']}")
-            print(f"Business hours ratio: {deal.metadata['business_hours_ratio']:.2f}")
-            
-            # Show concerning patterns
-            if deal.metadata['communication_gaps_count'] > 0:
-                print(f"⚠️  Warning: {deal.metadata['communication_gaps_count']} communication gaps detected")
-            if deal.metadata['response_time_metrics']['avg_response_time_hours'] > 24:
-                print(f"🐌 Slow response time: {deal.metadata['response_time_metrics']['avg_response_time_hours']:.1f} hours avg")
-            if deal.metadata['activity_frequency_trend'] == 'declining':
-                print(f"📉 Declining activity frequency trend")
-            
-            # Deal-specific insights
-            if deal.metadata['is_won']:
-                print(f"✅ Won deal - good patterns to learn from")
-            elif deal.metadata['is_lost']:
-                print(f"❌ Lost deal - warning patterns identified")
-            
-            if deal.metadata['deal_size_category'] == 'enterprise' and deal.metadata['communication_gaps_count'] > 0:
-                print(f"🚨 Enterprise deal with communication gaps - high risk!")
-                
-            if deal.metadata['is_new_business'] and deal.metadata['response_time_metrics']['avg_response_time_hours'] > 12:
-                print(f"⏰ New business deal with slow response times - potential issue")
-        
-        # Save to vector database
-        print(f"\n{'='*50}")
-        print("SAVING TO VECTOR DATABASE")
-        print(f"{'='*50}")
-        
-        vector_store.store_patterns(processed_deals)
-        
-        print("✅ Successfully processed and saved all deals!")
-        
-        # Test similarity search
-        print(f"\n{'='*50}")
-        print("TESTING SIMILARITY SEARCH")
-        print(f"{'='*50}")
-        
-        # Create a test query
-        test_query = "Client is interested in proposal and wants to schedule a call"
-        test_embedding = embedding_service.encode(test_query)
-        
-        # Search for similar patterns
-        results = vector_store.search_similar(test_embedding, top_k=3)
-        
-        print(f"Query: {test_query}")
-        print(f"Most similar deals:")
-        for i, result in enumerate(results):
-            print(f"{i+1}. Deal {result.deal_id} (similarity: {result.similarity_score:.3f})")
-        
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        raise
-
-
-if __name__ == "__main__":
-    main()

@@ -1,0 +1,52 @@
+You are a sales analytics expert analyzing historical deal patterns to provide context for current deal sentiment analysis.
+
+## TASK
+Analyze the provided similar deals and generate structured insights following the exact format below.
+
+## SIMILAR DEALS DATA
+{similar_deals_data}
+
+## REQUIRED OUTPUT FORMAT
+Generate analysis in EXACTLY this structure (keep sections concise):
+
+**Key Activities that had direct impact from buisness perspective**:
+
+
+## SENTIMENT PATTERNS ANALYSIS
+### Successful Deal Sentiment Patterns:
+- 
+- 
+
+### Failed Deal Sentiment Patterns:
+- 
+- 
+
+## LANGUAGE TONE ANALYSIS
+### Language Patterns for positive buisness impact:
+- 
+- 
+
+## DEAL PROGRESSION PATTERNS
+### Successful Progression Patterns:
+- 
+- 
+
+### Warning Signs:
+- 
+- 
+
+## CLIENT BEHAVIOR PATTERNS
+### Positive Client Behaviors:
+- 
+- 
+
+### Concerning Client Behaviors:
+- 
+- 
+
+## INSTRUCTIONS
+- Focus on actionable insights from the actual deal data
+- Identify genuine patterns, not generic advice
+- Keep each bullet point specific and concise
+- Use evidence from the provided deals
+- If insufficient data for a section, provide "Limited data available"

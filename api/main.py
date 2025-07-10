@@ -1,26 +1,25 @@
 import logging
-import sys
-import traceback
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime
-from pathlib import Path
 from typing import Dict, Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request, status
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.middleware.gzip import GZipMiddleware
 
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from api.routes import router
-from api.middleware import (
+from routes import router
+from middleware import (
     RequestLoggingMiddleware,
     ErrorHandlingMiddleware,
     RateLimitMiddleware,
-    AuthenticationMiddleware
+    AuthenticationMiddleware,
+    CORSMiddleware
 )
 from config.settings import settings
 from utils.logging_config import setup_logging
@@ -28,22 +27,23 @@ from utils.logging_config import setup_logging
 # Initialize logging
 logger = setup_logging()
 
-# Global service instances
+# Global service registry
 service_registry = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Application lifespan context manager
-    Handles startup and shutdown events
-    """
+    """Application lifespan context manager"""
     # Startup
     logger.info("Starting Sales Sentiment RAG API")
     
     try:
-        # Initialize core services
+        # Initialize services
         await initialize_services()
         logger.info("All services initialized successfully")
+        
+        # Build knowledge base if configured
+        if settings.KB_REBUILD_ON_STARTUP:
+            await build_knowledge_base_on_startup()
         
         yield
         
@@ -61,44 +61,83 @@ async def initialize_services():
     global service_registry
     
     try:
+        # Initialize cache manager
+        logger.info("Initializing cache manager...")
+        from utils.cache import get_cache_manager
+        service_registry['cache_manager'] = get_cache_manager()
+        
         # Initialize embedding service
+        logger.info("Initializing embedding service...")
         from core.embedding_service import get_embedding_service
         service_registry['embedding_service'] = get_embedding_service()
-        logger.info("Embedding service initialized")
         
         # Initialize vector store
+        logger.info("Initializing vector store...")
         from core.vector_store import get_vector_store
         service_registry['vector_store'] = get_vector_store()
-        logger.info("Vector store initialized")
         
-        # Initialize cache manager
-        from utils.cache import create_cache_manager
-        service_registry['cache_manager'] = create_cache_manager()
-        logger.info("Cache manager initialized")
-        
-        # Initialize sentiment analyzer
-        from llm.sentiment_analyzer import create_sentiment_analyzer
-        #service_registry['sentiment_analyzer'] = create_sentiment_analyzer(provider_name=os.getenv('LLM_PROVIDER'), provider_config={'api_key': os.getenv('GROQ_API_KEY'), 'model': os.getenv('GROQ_MODEL')})
-        service_registry['sentiment_analyzer'] = create_sentiment_analyzer(provider_name=os.getenv('LLM_PROVIDER'), provider_config={'api_key': os.getenv('AZURE_OPENAI_API_KEY'), 'endpoint': os.getenv('AZURE_OPENAI_ENDPOINT'), 'deployment_name': os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME'), 'api_version':os.getenv('AZURE_OPENAI_API_VERSION')})
-        logger.info("Sentiment analyzer initialized")
+        # Initialize data processor
+        logger.info("Initializing data processor...")
+        from core.data_processor import DealDataProcessor
+        service_registry['data_processor'] = DealDataProcessor(
+            service_registry['embedding_service']
+        )
         
         # Initialize RAG retriever
+        logger.info("Initializing RAG retriever...")
         from rag.retriever import create_rag_retriever
-        service_registry['rag_retriever'] = create_rag_retriever()
-        logger.info("RAG retriever initialized")
+        service_registry['rag_retriever'] = create_rag_retriever(
+            embedding_service=service_registry['embedding_service'],
+            vector_store=service_registry['vector_store']
+        )
         
-        # Initialize knowledge base manager
-        from rag.knowledge_base import create_knowledge_base_manager
-        service_registry['knowledge_base_manager'] = create_knowledge_base_manager()
-        logger.info("Knowledge base manager initialized")
+        # Initialize knowledge base builder
+        logger.info("Initializing knowledge base builder...")
+        from rag.knowledge_base import create_knowledge_base_builder
+        service_registry['knowledge_base_builder'] = create_knowledge_base_builder(
+            embedding_service=service_registry['embedding_service'],
+            vector_store=service_registry['vector_store'],
+            data_processor=service_registry['data_processor']
+        )
         
-        # Health check for all services
+        # Initialize sentiment analyzer
+        logger.info("Initializing sentiment analyzer...")
+        from llm.sentiment_analyzer import create_sentiment_analyzer
+        service_registry['sentiment_analyzer'] = create_sentiment_analyzer(
+            llm_provider=settings.LLM_PROVIDER,
+            llm_config=settings.get_llm_config()
+        )
+        
+        # Perform health checks
         await perform_health_checks()
         
     except Exception as e:
         logger.error(f"Service initialization failed: {e}")
-        logger.error(traceback.format_exc())
         raise
+
+async def build_knowledge_base_on_startup():
+    """Build knowledge base on startup if configured"""
+    try:
+        logger.info("Building knowledge base on startup...")
+        
+        kb_builder = service_registry.get('knowledge_base_builder')
+        if kb_builder:
+            # Run in thread pool to avoid blocking
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,
+                kb_builder.build_knowledge_base,
+                settings.DATA_PATH,
+                False  # Don't force rebuild
+            )
+            
+            if result.get('status') == 'completed':
+                logger.info(f"Knowledge base built successfully: {result.get('total_deals_processed', 0)} deals processed")
+            else:
+                logger.warning(f"Knowledge base build result: {result.get('status', 'unknown')}")
+        
+    except Exception as e:
+        logger.error(f"Error building knowledge base on startup: {e}")
 
 async def cleanup_services():
     """Cleanup services on shutdown"""
@@ -107,9 +146,8 @@ async def cleanup_services():
     try:
         # Close cache connections
         cache_manager = service_registry.get('cache_manager')
-        if cache_manager and hasattr(cache_manager, 'redis_client'):
-            if cache_manager.redis_client:
-                cache_manager.redis_client.close()
+        if cache_manager:
+            cache_manager.close()
         
         # Clear service registry
         service_registry.clear()
@@ -136,6 +174,15 @@ async def perform_health_checks():
         except Exception as e:
             health_results['vector_store'] = {'status': 'unhealthy', 'error': str(e)}
     
+    # Check sentiment analyzer
+    sentiment_analyzer = service_registry.get('sentiment_analyzer')
+    if sentiment_analyzer:
+        try:
+            stats = sentiment_analyzer.get_analyzer_stats()
+            health_results['sentiment_analyzer'] = {'status': 'healthy', 'stats': stats}
+        except Exception as e:
+            health_results['sentiment_analyzer'] = {'status': 'unhealthy', 'error': str(e)}
+    
     # Log health check results
     for service, health in health_results.items():
         status = health.get('status', 'unknown')
@@ -143,40 +190,29 @@ async def perform_health_checks():
         if status != 'healthy':
             logger.warning(f"Service {service} health issue: {health}")
 
-def get_service(service_name: str):
-    """Get service instance from registry"""
-    service = service_registry.get(service_name)
-    if not service:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Service {service_name} not available"
-        )
-    return service
-
 # Create FastAPI application
 app = FastAPI(
-    title="Sales Sentiment RAG API",
+    title=settings.APP_NAME,
+    version=settings.APP_VERSION,
     description="""
     Advanced Sales Sentiment Analysis API with Retrieval-Augmented Generation (RAG) capabilities.
     
     This API analyzes salesperson performance and sentiment from CRM activities using:
-    - Historical deal pattern matching
+    - Historical deal pattern matching through RAG
     - LLM-powered sentiment analysis
-    - Performance benchmarking
-    - Risk assessment and coaching recommendations
+    - Modular context engineering
+    - Multiple LLM provider support
     
     ## Features
     - **Sentiment Analysis**: Analyze salesperson sentiment from deal activities
-    - **Performance Benchmarking**: Compare against successful deal patterns
-    - **Risk Assessment**: Identify behavioral risks that could jeopardize deals
-    - **Coaching Recommendations**: Get actionable improvement suggestions
-    - **Deal Insights**: Comprehensive analysis with historical context
-    - **Knowledge Base Management**: Manage and optimize the pattern database
+    - **RAG Context**: Retrieve relevant examples from past deals for better analysis
+    - **Knowledge Base Management**: Build and manage historical deal patterns
+    - **Multi-Provider Support**: Azure OpenAI, OpenAI, Anthropic, Groq
+    - **Production Ready**: Rate limiting, caching, authentication, monitoring
     """,
-    version="1.0.0",
     contact={
-        "name": "Sales Sentiment RAG Team",
-        "email": "aman.jaiswar@glynac.ai",
+        "name": "Sales Sentiment RAG API",
+        "email": "support@company.com",
     },
     license_info={
         "name": "MIT License",
@@ -188,24 +224,16 @@ app = FastAPI(
     openapi_url="/openapi.json"
 )
 
-# Add middleware
+# Add middleware (order matters!)
 app.add_middleware(GZipMiddleware, minimum_size=1000)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Add custom middleware
+app.add_middleware(CORSMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(ErrorHandlingMiddleware)
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(AuthenticationMiddleware)
 
 # Include API routes
-app.include_router(router, prefix="/api/v1")
+app.include_router(router, prefix=settings.API_PREFIX)
 
 # Global exception handlers
 @app.exception_handler(HTTPException)
@@ -227,7 +255,6 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 async def general_exception_handler(request: Request, exc: Exception):
     """Handle general exceptions"""
     logger.error(f"Unhandled exception: {exc}")
-    logger.error(traceback.format_exc())
     
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -246,11 +273,12 @@ async def general_exception_handler(request: Request, exc: Exception):
 async def root():
     """Root endpoint with API information"""
     return {
-        "name": "Sales Sentiment RAG API",
-        "version": "1.0.0",
+        "name": settings.APP_NAME,
+        "version": settings.APP_VERSION,
         "description": "Advanced Sales Sentiment Analysis with RAG capabilities",
         "docs_url": "/docs",
         "health_url": "/health",
+        "api_prefix": settings.API_PREFIX,
         "timestamp": datetime.utcnow().isoformat()
     }
 
@@ -285,6 +313,21 @@ async def health_check():
                     "error": str(e)
                 }
         
+        # Check sentiment analyzer
+        sentiment_analyzer = service_registry.get('sentiment_analyzer')
+        if sentiment_analyzer:
+            try:
+                stats = sentiment_analyzer.get_analyzer_stats()
+                health_results["services"]["sentiment_analyzer"] = {
+                    "status": "healthy",
+                    "stats": stats
+                }
+            except Exception as e:
+                health_results["services"]["sentiment_analyzer"] = {
+                    "status": "unhealthy",
+                    "error": str(e)
+                }
+        
         # Check overall health
         unhealthy_services = [
             name for name, health in health_results["services"].items()
@@ -314,8 +357,8 @@ app.state.services = service_registry
 if __name__ == "__main__":
     uvicorn.run(
         "api.main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
+        host=settings.API_HOST,
+        port=settings.API_PORT,
+        reload=settings.DEBUG,
         log_level=settings.LOG_LEVEL.lower()
     )

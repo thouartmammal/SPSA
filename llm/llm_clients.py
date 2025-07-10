@@ -415,7 +415,7 @@ class LLMClient:
     def __init__(
         self, 
         provider: LLMProvider,
-        prompt_file_path: str = "prompts\prompt_version_3.txt",
+        prompt_file_path: str = "prompts/prompt_version_3.txt",
         max_retries: int = 3,
         retry_delay: float = 1.0
     ):
@@ -601,47 +601,3 @@ def create_llm_client(provider_name: str, **provider_kwargs) -> LLMClient:
         raise ValueError(f"Unknown provider: {provider_name}")
     
     return LLMClient(provider)
-
-# Example usage and testing
-def test_llm_client():
-    """Test the LLM client with sample data"""
-    
-    # Test data
-    sample_rag_context = """
-    HISTORICAL DEAL ANALYSIS:
-    - 3 similar won deals averaged 4.2 hour response times
-    - 2 similar lost deals had communication gaps > 7 days
-    - Success pattern: proactive follow-ups and meeting scheduling
-    """
-    
-    sample_activities = """
-    [2024-01-15] EMAIL: Subject: Follow-up on pricing discussion
-    [2024-01-16] CALL: Discussed implementation timeline with client
-    [2024-01-17] TASK: Prepare detailed proposal for client review
-    """
-    
-    try:
-        # Initialize with OpenAI (example)
-        client = create_llm_client(
-            'openai',
-            api_key=os.getenv('OPENAI_API_KEY', 'your-openai-api-key'),
-            model='gpt-4-turbo-preview'
-        )
-        
-        # Analyze sentiment
-        result = client.analyze_sentiment(
-            deal_id="TEST_001",
-            activities_text=sample_activities,
-            rag_context=sample_rag_context,
-            activity_frequency=5,
-            total_activities=12
-        )
-        
-        print("Sentiment Analysis Result:")
-        print(json.dumps(result, indent=2))
-        
-    except Exception as e:
-        print(f"Test failed: {e}")
-
-if __name__ == "__main__":
-    test_llm_client()

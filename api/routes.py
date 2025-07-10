@@ -1,18 +1,20 @@
-import time
 import logging
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Union, Literal
 
-from fastapi import APIRouter, HTTPException, status, Depends, Request, BackgroundTasks, Body, Request
+from fastapi import APIRouter, HTTPException, status, Depends, Request, BackgroundTasks, Body
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, validator
+
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
 # Create router
 router = APIRouter()
 
-# Base Activity Model
+# =================== REQUEST/RESPONSE MODELS ===================
+
 class BaseActivity(BaseModel):
     """Base activity model with common fields"""
     activity_type: str = Field(..., description="Type of activity")
@@ -20,7 +22,6 @@ class BaseActivity(BaseModel):
     class Config:
         extra = "allow"  # Allow extra fields for flexibility
 
-# Specific Activity Models based on your data structure
 class EmailActivity(BaseActivity):
     """Email activity data"""
     activity_type: Literal["email"] = "email"
@@ -29,6 +30,7 @@ class EmailActivity(BaseActivity):
     to: Optional[List[str]] = None
     subject: Optional[str] = None
     body: Optional[str] = None
+    state: Optional[str] = None
     direction: Optional[str] = None
 
 class CallActivity(BaseActivity):
@@ -39,7 +41,7 @@ class CallActivity(BaseActivity):
     call_title: Optional[str] = None
     call_body: Optional[str] = None
     call_direction: Optional[str] = None
-    call_duration: Optional[int] = None
+    call_duration: Optional[str] = None
     call_status: Optional[str] = None
 
 class MeetingActivity(BaseActivity):
@@ -77,39 +79,74 @@ class TaskActivity(BaseActivity):
 ActivityData = Union[EmailActivity, CallActivity, MeetingActivity, NoteActivity, TaskActivity]
 
 class DealData(BaseModel):
-    """Deal data for analysis"""
-    deal_id: str = Field(..., description="Unique deal identifier")
-    activities: List[Dict[str, Any]] = Field(..., description="List of deal activities")
-    amount: Optional[Union[str, float]] = Field(None, description="Deal amount")
-    dealstage: Optional[str] = Field(None, description="Current deal stage")
-    dealtype: Optional[str] = Field(None, description="Type of deal")
-    deal_stage_probability: Optional[Union[str, float]] = Field(None, description="Deal probability percentage")
-    createdate: Optional[str] = Field(None, description="Deal creation date")
+    """Deal data structure matching your actual format"""
+    deal_id: str = Field(..., description="Deal identifier")
+    activities: List[Dict[str, Any]] = Field(..., description="List of activities")
+    amount: Optional[str] = Field(None, description="Deal amount")
     closedate: Optional[str] = Field(None, description="Deal close date")
+    createdate: Optional[str] = Field(None, description="Deal create date")
+    dealstage: Optional[str] = Field(None, description="Deal stage")
+    deal_stage_probability: Optional[str] = Field(None, description="Deal probability")
+    dealtype: Optional[str] = Field(None, description="Deal type")
     
-    @validator('amount', pre=True)
-    def parse_amount(cls, v):
-        """Convert amount to float if it's a string"""
-        if v is None:
-            return None
-        if isinstance(v, str):
-            try:
-                return float(v)
-            except ValueError:
-                return 0.0
-        return float(v)
+    @validator('deal_id')
+    def validate_deal_id(cls, v):
+        if not v or not v.strip():
+            raise ValueError("Deal ID cannot be empty")
+        return str(v).strip()
     
-    @validator('deal_stage_probability', pre=True)
-    def parse_probability(cls, v):
-        """Convert probability to float if it's a string"""
-        if v is None:
-            return None
-        if isinstance(v, str):
+    @validator('activities')
+    def validate_activities(cls, v):
+        if not isinstance(v, list):
+            raise ValueError("Activities must be a list")
+        
+        # Validate each activity has required fields
+        for i, activity in enumerate(v):
+            if not isinstance(activity, dict):
+                raise ValueError(f"Activity {i} must be a dictionary")
+            
+            activity_type = activity.get('activity_type')
+            if not activity_type:
+                raise ValueError(f"Activity {i} missing 'activity_type' field")
+            
+            # Validate activity type specific fields
+            if activity_type == 'email':
+                if not any([activity.get('subject'), activity.get('body')]):
+                    raise ValueError(f"Email activity {i} must have either 'subject' or 'body'")
+            elif activity_type == 'call':
+                if not any([activity.get('call_title'), activity.get('call_body')]):
+                    raise ValueError(f"Call activity {i} must have either 'call_title' or 'call_body'")
+            elif activity_type == 'meeting':
+                if not any([activity.get('meeting_title'), activity.get('internal_meeting_notes')]):
+                    raise ValueError(f"Meeting activity {i} must have either 'meeting_title' or 'internal_meeting_notes'")
+            elif activity_type == 'note':
+                if not activity.get('note_body'):
+                    raise ValueError(f"Note activity {i} must have 'note_body'")
+            elif activity_type == 'task':
+                if not any([activity.get('task_subject'), activity.get('task_body')]):
+                    raise ValueError(f"Task activity {i} must have either 'task_subject' or 'task_body'")
+        
+        return v
+    
+    @validator('amount')
+    def validate_amount(cls, v):
+        if v is not None:
             try:
-                return float(v)
+                float(v)
             except ValueError:
-                return 0.0
-        return float(v)
+                raise ValueError("Amount must be a valid number")
+        return v
+    
+    @validator('deal_stage_probability')
+    def validate_probability(cls, v):
+        if v is not None:
+            try:
+                prob = float(v)
+                if not 0.0 <= prob <= 1.0:
+                    raise ValueError("Deal probability must be between 0.0 and 1.0")
+            except ValueError:
+                raise ValueError("Deal probability must be a valid number")
+        return v
 
 class AnalysisRequest(BaseModel):
     """Request for sentiment analysis"""
@@ -138,23 +175,22 @@ class KnowledgeBaseBuildRequest(BaseModel):
     rebuild: bool = Field(False, description="Whether to rebuild existing knowledge base")
     batch_size: int = Field(50, description="Batch processing size")
 
-# CORRECTED Response models matching your exact format
+# Response models
 class ActivityBreakdownItem(BaseModel):
-    """Individual activity breakdown - MATCHES YOUR EXACT FORMAT"""
+    """Individual activity breakdown"""
     sentiment: str
     sentiment_score: float
     key_indicators: List[str]
     count: int
-    # Removed performance_rating - not in your format!
 
 class DealMomentumIndicators(BaseModel):
-    """Deal momentum indicators - MATCHES YOUR EXACT FORMAT"""
+    """Deal momentum indicators"""
     stage_progression: str
     client_engagement_trend: str
     competitive_position: str
 
 class SentimentAnalysisResponse(BaseModel):
-    """Sentiment analysis response - MATCHES YOUR EXACT FORMAT"""
+    """Sentiment analysis response"""
     overall_sentiment: str
     sentiment_score: float = Field(..., ge=-1.0, le=1.0)
     confidence: float = Field(..., ge=0.0, le=1.0)
@@ -208,7 +244,8 @@ class KnowledgeBaseBuildResponse(BaseModel):
     processing_statistics: Dict[str, Any]
     timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
-# Dependency to get services from app state
+# =================== DEPENDENCY FUNCTIONS ===================
+
 def get_services(request: Request):
     """Get services from application state"""
     return request.app.state.services
@@ -233,120 +270,107 @@ def get_rag_retriever(services: dict = Depends(get_services)):
         )
     return retriever
 
-def get_knowledge_base_manager(services: dict = Depends(get_services)):
-    """Get knowledge base manager service"""
-    kb_manager = services.get('knowledge_base_manager')
-    if not kb_manager:
+def get_knowledge_base_builder(services: dict = Depends(get_services)):
+    """Get knowledge base builder service"""
+    kb_builder = services.get('knowledge_base_builder')
+    if not kb_builder:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Knowledge base manager service not available"
+            detail="Knowledge base builder service not available"
         )
-    return kb_manager
+    return kb_builder
+
+def get_vector_store(services: dict = Depends(get_services)):
+    """Get vector store service"""
+    vector_store = services.get('vector_store')
+    if not vector_store:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Vector store service not available"
+        )
+    return vector_store
 
 def get_cache_manager(services: dict = Depends(get_services)):
     """Get cache manager service"""
-    cache = services.get('cache_manager')
-    if not cache:
+    cache_manager = services.get('cache_manager')
+    if not cache_manager:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Cache manager service not available"
         )
-    return cache
+    return cache_manager
 
 def get_request_id(request: Request) -> str:
     """Get request ID from request state"""
     return getattr(request.state, 'request_id', 'unknown')
 
-@router.post(
-    "/analyze/sentiment",
-    response_model=SentimentAnalysisResponse,
-    summary="Analyze salesperson sentiment", 
-    description="Analyze salesperson sentiment and performance from deal activities",
-    tags=["Analysis"]
-)
+# =================== API ENDPOINTS ===================
+
+@router.post("/analyze/sentiment", response_model=SentimentAnalysisResponse, tags=["Analysis"])
 async def analyze_sentiment(
-    req: Request,
-    analyzer=Depends(get_sentiment_analyzer),
-    request: AnalysisRequest = Body(
+    request: Request,
+    sentiment_analyzer = Depends(get_sentiment_analyzer),
+    analysis_request: AnalysisRequest = Body(
+        ...,
         example={
             "deal_data": {
-                "deal_id": "deal_12345678",
-                "amount": 25000,
-                "dealstage": "Proposal",
-                "dealtype": "newbusiness",
-                "deal_stage_probability": 0.75,
-                "createdate": "2024-01-15T09:00:00Z", 
-                "closedate": None,
+                "deal_id": "12345678",
                 "activities": [
                     {
-                        "sent_at": "2024-02-13T18:40:10.028Z",
-                        "from": None,
-                        "to": ["contact1@client-company.com", "contact2@client-company.com"],
-                        "subject": "Proposal Document for Review",
-                        "body": "Hi [Client Name], Great to speak with you yesterday. I've prepared the proposal document which I'm attaching here for your review. As discussed, I've included the optional extended support package and outlined the implementation timeline. Let me know if you have any questions about this document!",
+                        "sent_at": "2023-11-21T14:39:17.123Z",
+                        "from": "client@company.com",
+                        "to": ["sales@ourcompany.com"],
+                        "subject": "RE: Proposal Discussion",
+                        "body": "Thanks for the proposal. We have some questions about pricing.",
                         "state": "email",
-                        "direction": "outgoing",
-                        "activity_type": "email"
-                    },
-                    {
-                        "sent_at": "2024-02-15T14:30:42.690Z",
-                        "from": "decision-maker@client-company.com",
-                        "to": ["salesperson@your-company.com"],
-                        "subject": "RE: Proposal Document for Review",
-                        "body": "Hi [Salesperson], Thanks for sending this over so quickly. I have a few questions about the pricing structure and would like to discuss the implementation timeline. Can we schedule a call this week?",
-                        "state": "thread",
                         "direction": "incoming",
                         "activity_type": "email"
                     },
                     {
-                        "id": "call_001",
-                        "createdate": "2024-02-16T15:30:00Z",
-                        "call_title": "Proposal Discussion Call",
-                        "call_body": "Discussed proposal terms, pricing structure, and implementation timeline. Client had questions about ROI projections and integration requirements. Positive reception overall, they're moving forward with internal review process.",
-                        "call_direction": "outgoing",
-                        "call_duration": 45,
-                        "call_status": "completed",
+                        "id": "call_123",
+                        "createdate": "2023-11-22T10:30:00.000Z",
+                        "call_title": "Follow-up call with client",
+                        "call_body": "Discussed pricing concerns and provided clarification",
+                        "call_direction": "OUTBOUND",
+                        "call_duration": "30",
+                        "call_status": "COMPLETED",
                         "activity_type": "call"
                     },
                     {
-                        "id": "meeting_001", 
-                        "meeting_title": "Account Strategy Planning Session",
-                        "internal_meeting_notes": "Internal team meeting to discuss account strategy and next steps. Reviewed client's current pain points, budget parameters, and decision timeline. Need to emphasize value proposition and provide additional case studies.",
+                        "id": "meeting_123",
+                        "internal_meeting_notes": "Reviewed client feedback and prepared response",
+                        "meeting_title": "Client Strategy Meeting",
                         "meeting_location": "Conference Room A",
-                        "meeting_location_type": "office",
-                        "meeting_outcome": "action_items_defined",
-                        "meeting_start_time": "2024-02-14T14:00:00Z",
-                        "meeting_end_time": "2024-02-14T15:00:00Z",
+                        "meeting_location_type": "OFFICE",
+                        "meeting_outcome": "COMPLETED",
+                        "meeting_start_time": "2023-11-23T15:00:00.000Z",
+                        "meeting_end_time": "2023-11-23T16:00:00.000Z",
                         "activity_type": "meeting"
                     },
                     {
-                        "id": "note_001",
-                        "createdate": "2024-02-17T16:20:00Z",
-                        "lastmodifieddate": "2024-02-17T16:25:00Z",
-                        "note_body": "Client mentioned their procurement process requires additional approvals. Important to clarify timeline expectations and provide references from similar implementations. Decision maker prefers morning calls due to time zone differences.",
+                        "id": "note_123",
+                        "createdate": "2023-11-24T09:00:00.000Z",
+                        "lastmodifieddate": "2023-11-24T09:15:00.000Z",
+                        "note_body": "Client requested additional references",
                         "activity_type": "note"
                     },
                     {
-                        "id": "task_001",
-                        "createdate": "2024-02-16T20:47:18.511Z",
+                        "id": "task_123",
+                        "createdate": "2023-11-25T08:00:00.000Z",
                         "task_priority": "HIGH",
                         "task_status": "COMPLETED",
                         "task_type": "EMAIL",
-                        "task_subject": "Send Additional Case Studies",
-                        "task_body": "Client requested case studies from similar implementations. Need to send 2-3 relevant examples showing ROI and implementation success. Also need to clarify if pilot program option is available.",
-                        "activity_type": "task"
-                    },
-                    {
-                        "id": "task_002",
-                        "createdate": "2024-02-18T10:15:04.145Z",
-                        "task_priority": "MEDIUM",
-                        "task_status": "IN_PROGRESS",
-                        "task_type": "FOLLOW_UP",
-                        "task_subject": "Schedule Technical Demo",
-                        "task_body": "Client expressed interest in technical demonstration. Need to coordinate with product team and schedule demo for next week. Ensure technical requirements are documented beforehand.",
+                        "task_subject": "Send references to client",
+                        "task_body": "Compile and send 3 relevant client references",
                         "activity_type": "task"
                     }
-                ]
+                ],
+                "amount": "50000",
+                "closedate": "2023-12-01T10:00:00.000Z",
+                "createdate": "2023-11-01T08:00:00.000Z",
+                "dealstage": "Proposal",
+                "deal_stage_probability": "0.75",
+                "dealtype": "newbusiness"
             },
             "include_rag_context": True,
             "analysis_options": {
@@ -356,508 +380,450 @@ async def analyze_sentiment(
         }
     )
 ):
-    """Analyze salesperson sentiment from deal activities - RETURNS YOUR EXACT FORMAT"""
+    """
+    Analyze sentiment for a single deal
     
-    request_id = get_request_id(req)
-    logger.info(f"[{request_id}] Starting sentiment analysis for deal {request.deal_data.deal_id}")
+    This endpoint analyzes salesperson sentiment from deal activities using:
+    - RAG retrieval of relevant historical examples
+    - LLM-powered sentiment analysis
+    - Modular context engineering
+    
+    Returns detailed sentiment analysis including:
+    - Overall sentiment score and confidence
+    - Activity breakdown by type
+    - Deal momentum indicators
+    - Professional gaps and excellence indicators
+    - Risk and opportunity indicators
+    - Actionable recommendations
+    """
     
     try:
-        start_time = time.time()
+        request_id = get_request_id(request)
+        logger.info(f"[{request_id}] Analyzing sentiment for deal {analysis_request.deal_data.deal_id}")
         
-        # Convert request to dict format expected by analyzer
-        deal_data_dict = {
-            "deal_id": request.deal_data.deal_id,
-            "activities": request.deal_data.activities,  # Keep as original dicts
-            **request.deal_data.dict(exclude={"deal_id", "activities"})
-        }
+        # Convert Pydantic model to dict format expected by analyzer
+        deal_dict = analysis_request.deal_data.dict()
         
-        # Perform analysis
-        result = analyzer.analyze_deal_sentiment(
-            deal_data=deal_data_dict,
-            include_rag_context=request.include_rag_context,
-            analysis_options=request.analysis_options or {}
+        # Perform sentiment analysis
+        result = sentiment_analyzer.analyze_deal_sentiment(
+            deal_data=deal_dict,
+            include_rag_context=analysis_request.include_rag_context
         )
         
-        processing_time = time.time() - start_time
-        logger.info(f"[{request_id}] Raw LLM result keys: {list(result.keys())}")
-        
-        # CORRECTED: Convert activity_breakdown to proper format (YOUR FORMAT)
-        activity_breakdown = {}
-        for activity_type, breakdown in result.get("activity_breakdown", {}).items():
-            activity_breakdown[activity_type] = ActivityBreakdownItem(
-                sentiment=breakdown.get("sentiment", "neutral"),
-                sentiment_score=breakdown.get("sentiment_score", 0.0),
-                key_indicators=breakdown.get("key_indicators", []),
-                count=breakdown.get("count", 0)
-                # REMOVED performance_rating - not in your format!
+        # Check for errors
+        if 'error' in result:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Analysis failed: {result['error']}"
             )
         
-        # CORRECTED: Create response matching YOUR EXACT FORMAT
-        response = SentimentAnalysisResponse(
-            overall_sentiment=result.get("overall_sentiment", "neutral"),
-            sentiment_score=result.get("sentiment_score", 0.0),
-            confidence=result.get("confidence", 0.5),
-            activity_breakdown=activity_breakdown,
-            deal_momentum_indicators=DealMomentumIndicators(
-                stage_progression=result.get("deal_momentum_indicators", {}).get("stage_progression", "unknown"),
-                client_engagement_trend=result.get("deal_momentum_indicators", {}).get("client_engagement_trend", "unknown"),
-                competitive_position=result.get("deal_momentum_indicators", {}).get("competitive_position", "unknown")
-            ),
-            reasoning=result.get("reasoning", "No reasoning provided"),
-            professional_gaps=result.get("professional_gaps", []),
-            excellence_indicators=result.get("excellence_indicators", []),
-            risk_indicators=result.get("risk_indicators", []),
-            opportunity_indicators=result.get("opportunity_indicators", []),
-            temporal_trend=result.get("temporal_trend", "stable"),
-            recommended_actions=result.get("recommended_actions", []),
-            context_analysis_notes=result.get("context_analysis_notes", [])
-        )
+        logger.info(f"[{request_id}] Sentiment analysis completed for deal {analysis_request.deal_data.deal_id}")
+        return result
         
-        logger.info(f"[{request_id}] Sentiment analysis completed in {processing_time:.2f}s")
-        return response
-        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"[{request_id}] Sentiment analysis failed: {str(e)}")
+        logger.error(f"Error in sentiment analysis: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Analysis failed: {str(e)}"
         )
 
-# @router.post(
-#     "/analyze/batch",
-#     response_model=BatchAnalysisResponse,
-#     summary="Batch analyze multiple deals",
-#     description="Analyze sentiment for multiple deals in a single request",
-#     tags=["Analysis"]
-# )
-# async def analyze_batch(
-#     request: BatchAnalysisRequest,
-#     req: Request,
-#     background_tasks: BackgroundTasks,
-#     analyzer=Depends(get_sentiment_analyzer)
-# ):
-#     """Analyze sentiment for multiple deals"""
-    
-#     request_id = get_request_id(req)
-#     logger.info(f"[{request_id}] Starting batch analysis for {len(request.deals)} deals")
-    
-#     try:
-#         start_time = time.time()
-        
-#         # Convert deals to expected format
-#         deals_data = []
-#         for deal in request.deals:
-#             deal_dict = {
-#                 "deal_id": deal.deal_id,
-#                 "activities": deal.activities,  # Keep as original dicts
-#                 **deal.dict(exclude={"deal_id", "activities"})
-#             }
-#             deals_data.append(deal_dict)
-        
-#         # Perform batch analysis
-#         results = analyzer.batch_analyze_sentiment(
-#             deals_data=deals_data,
-#             include_rag_context=request.include_rag_context,
-#             batch_size=request.batch_size
-#         )
-        
-#         processing_time = time.time() - start_time
-        
-#         # Process results
-#         batch_results = []
-#         successful_count = 0
-#         failed_count = 0
-        
-#         for result in results:
-#             if result.get("error"):
-#                 batch_results.append({
-#                     "deal_id": result.get("deal_id", "unknown"),
-#                     "success": False,
-#                     "result": None,
-#                     "error": result["error"]
-#                 })
-#                 failed_count += 1
-#             else:
-#                 try:
-#                     # Create proper response object using corrected format
-#                     activity_breakdown = {}
-#                     for activity_type, breakdown in result.get("activity_breakdown", {}).items():
-#                         activity_breakdown[activity_type] = ActivityBreakdownItem(
-#                             sentiment=breakdown.get("sentiment", "neutral"),
-#                             sentiment_score=breakdown.get("sentiment_score", 0.0),
-#                             key_indicators=breakdown.get("key_indicators", []),
-#                             count=breakdown.get("count", 0)
-#                             # REMOVED performance_rating!
-#                         )
-                    
-#                     response_obj = SentimentAnalysisResponse(
-#                         overall_sentiment=result.get("overall_sentiment", "neutral"),
-#                         sentiment_score=result.get("sentiment_score", 0.0),
-#                         confidence=result.get("confidence", 0.5),
-#                         activity_breakdown=activity_breakdown,
-#                         deal_momentum_indicators=DealMomentumIndicators(
-#                             stage_progression=result.get("deal_momentum_indicators", {}).get("stage_progression", "unknown"),
-#                             client_engagement_trend=result.get("deal_momentum_indicators", {}).get("client_engagement_trend", "unknown"),
-#                             competitive_position=result.get("deal_momentum_indicators", {}).get("competitive_position", "unknown")
-#                         ),
-#                         reasoning=result.get("reasoning", "No reasoning provided"),
-#                         professional_gaps=result.get("professional_gaps", []),
-#                         excellence_indicators=result.get("excellence_indicators", []),
-#                         risk_indicators=result.get("risk_indicators", []),
-#                         opportunity_indicators=result.get("opportunity_indicators", []),
-#                         temporal_trend=result.get("temporal_trend", "stable"),
-#                         recommended_actions=result.get("recommended_actions", []),
-#                         context_analysis_notes=result.get("context_analysis_notes", [])
-#                     )
-                    
-#                     batch_results.append({
-#                         "deal_id": result.get("deal_context", {}).get("deal_id", "unknown"),
-#                         "success": True,
-#                         "result": response_obj,
-#                         "error": None
-#                     })
-#                     successful_count += 1
-#                 except Exception as e:
-#                     logger.error(f"Error processing result for deal: {e}")
-#                     batch_results.append({
-#                         "deal_id": result.get("deal_context", {}).get("deal_id", "unknown"),
-#                         "success": False,
-#                         "result": None,
-#                         "error": f"Result processing error: {str(e)}"
-#                     })
-#                     failed_count += 1
-        
-#         logger.info(f"[{request_id}] Batch analysis completed: {successful_count} successful, {failed_count} failed")
-        
-#         return BatchAnalysisResponse(
-#             total_deals=len(request.deals),
-#             successful_analyses=successful_count,
-#             failed_analyses=failed_count,
-#             results=batch_results,
-#             processing_time_seconds=processing_time
-#         )
-        
-#     except Exception as e:
-#         logger.error(f"[{request_id}] Batch analysis failed: {str(e)}")
-#         raise HTTPException(
-#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-#             detail=f"Batch analysis failed: {str(e)}"
-#         )
-
-# # Search endpoints (unchanged)
-# @router.post(
-#     "/search",
-#     response_model=SearchResponse,
-#     summary="Search knowledge base",
-#     description="Search for similar deal patterns in the knowledge base",
-#     tags=["Search"]
-# )
-# async def search_knowledge_base(
-#     request: SearchRequest,
-#     req: Request,
-#     retriever=Depends(get_rag_retriever)
-# ):
-#     """Search for similar patterns in knowledge base"""
-    
-#     request_id = get_request_id(req)
-#     logger.info(f"[{request_id}] Searching knowledge base for: {request.query[:100]}...")
-    
-#     try:
-#         start_time = time.time()
-        
-#         # Perform search
-#         results = retriever.retrieve_similar_patterns(
-#             query_text=request.query,
-#             top_k=request.top_k,
-#             filters=request.filters
-#         )
-        
-#         search_time = time.time() - start_time
-        
-#         # Format results
-#         search_results = []
-#         for result in results:
-#             search_results.append({
-#                 "deal_id": result.deal_id,
-#                 "similarity_score": result.similarity_score,
-#                 "content_snippet": result.combined_text[:200] + "..." if len(result.combined_text) > 200 else result.combined_text,
-#                 "metadata": result.metadata if request.include_metadata else {}
-#             })
-        
-#         logger.info(f"[{request_id}] Search completed in {search_time:.3f}s, found {len(search_results)} results")
-        
-#         return SearchResponse(
-#             query=request.query,
-#             results=search_results,
-#             total_results=len(search_results),
-#             search_time_ms=search_time * 1000
-#         )
-        
-#     except Exception as e:
-#         logger.error(f"[{request_id}] Search failed: {str(e)}")
-#         raise HTTPException(
-#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-#             detail=f"Search failed: {str(e)}"
-#         )
-
-# @router.get(
-#     "/search/success-patterns/{query}",
-#     response_model=SearchResponse,
-#     summary="Search successful deal patterns",
-#     description="Search for patterns from successful (won) deals only",
-#     tags=["Search"]
-# )
-# async def search_success_patterns(
-#     query: str,
-#     top_k: int = 5,
-#     req: Request = None,
-#     retriever=Depends(get_rag_retriever)
-# ):
-#     """Search for successful deal patterns"""
-    
-#     request_id = get_request_id(req)
-#     logger.info(f"[{request_id}] Searching success patterns for: {query[:100]}...")
-    
-#     try:
-#         start_time = time.time()
-        
-#         results = retriever.get_success_patterns(query, top_k=top_k)
-#         search_time = time.time() - start_time
-        
-#         # Format results
-#         search_results = []
-#         for result in results:
-#             search_results.append({
-#                 "deal_id": result.deal_id,
-#                 "similarity_score": result.similarity_score,
-#                 "content_snippet": result.combined_text[:200] + "..." if len(result.combined_text) > 200 else result.combined_text,
-#                 "metadata": result.metadata
-#             })
-        
-#         return SearchResponse(
-#             query=f"Success patterns: {query}",
-#             results=search_results,
-#             total_results=len(search_results),
-#             search_time_ms=search_time * 1000
-#         )
-        
-#     except Exception as e:
-#         logger.error(f"[{request_id}] Success patterns search failed: {str(e)}")
-#         raise HTTPException(
-#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-#             detail=f"Success patterns search failed: {str(e)}"
-#         )
-
-# # Knowledge Base Management endpoints (unchanged)
-# @router.get(
-#     "/knowledge-base/status",
-#     response_model=KnowledgeBaseStatus,
-#     summary="Get knowledge base status",
-#     description="Get comprehensive status and health metrics for the knowledge base",
-#     tags=["Knowledge Base"]
-# )
-# async def get_knowledge_base_status(
-#     req: Request,
-#     kb_manager=Depends(get_knowledge_base_manager)
-# ):
-#     """Get knowledge base status and health metrics"""
-    
-#     request_id = get_request_id(req)
-#     logger.info(f"[{request_id}] Getting knowledge base status")
-    
-#     try:
-#         status_data = kb_manager.get_knowledge_base_status()
-        
-#         # Format for response model
-#         formatted_status = {
-#             "status": status_data.get("status", "unknown"),
-#             "stats": {
-#                 "total_deals": status_data.get("metadata", {}).get("total_deals", 0),
-#                 "deal_outcomes": {},
-#                 "deal_sizes": {},
-#                 "last_updated": status_data.get("metadata", {}).get("last_updated", datetime.utcnow().isoformat()),
-#                 "embedding_dimension": status_data.get("metadata", {}).get("vector_dimension", 0)
-#             },
-#             "health_metrics": status_data.get("health_metrics", {}),
-#             "last_checked": status_data.get("last_checked", datetime.utcnow().isoformat())
-#         }
-        
-#         return KnowledgeBaseStatus(**formatted_status)
-        
-#     except Exception as e:
-#         logger.error(f"[{request_id}] Failed to get knowledge base status: {str(e)}")
-#         raise HTTPException(
-#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-#             detail=f"Failed to get knowledge base status: {str(e)}"
-#         )
-
-@router.post(
-    "/knowledge-base/build",
-    response_model=KnowledgeBaseBuildResponse,
-    summary="Build knowledge base",
-    description="Build or rebuild the knowledge base from data sources",
-    tags=["Knowledge Base"]
-)
-async def build_knowledge_base(
-    request: KnowledgeBaseBuildRequest,
-    req: Request,
+@router.post("/analyze/batch", response_model=BatchAnalysisResponse, tags=["Analysis"])
+async def analyze_batch_sentiment(
+    request: Request,
     background_tasks: BackgroundTasks,
-    kb_manager=Depends(get_knowledge_base_manager)
+    sentiment_analyzer = Depends(get_sentiment_analyzer),
+    batch_request: BatchAnalysisRequest = Body(
+        ...,
+        example={
+            "deals": [
+                {
+                    "deal_id": "deal_001",
+                    "activities": [
+                        {
+                            "activity_type": "email",
+                            "subject": "Follow-up on proposal",
+                            "body": "Thanks for the meeting. I'll send the revised proposal.",
+                            "direction": "outgoing"
+                        }
+                    ],
+                    "amount": "50000",
+                    "dealstage": "Proposal",
+                    "dealtype": "newbusiness"
+                },
+                {
+                    "deal_id": "deal_002",
+                    "activities": [
+                        {
+                            "activity_type": "call",
+                            "call_title": "Discovery call",
+                            "call_body": "Discussed requirements and next steps"
+                        }
+                    ],
+                    "amount": "75000",
+                    "dealstage": "Discovery",
+                    "dealtype": "newbusiness"
+                }
+            ],
+            "include_rag_context": True,
+            "batch_size": 10
+        }
+    )
 ):
-    """Build knowledge base from data sources"""
+    """
+    Analyze sentiment for multiple deals in batch
     
-    request_id = get_request_id(req)
-    logger.info(f"[{request_id}] Starting knowledge base build with {len(request.data_sources)} sources")
+    Processes multiple deals efficiently with:
+    - Batch processing for performance
+    - Individual error handling
+    - Progress tracking
+    - Detailed batch statistics
+    """
     
     try:
-        # Validate data sources exist
-        from pathlib import Path
-        for source in request.data_sources:
-            if not Path(source).exists():
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Data source not found: {source}"
-                )
+        request_id = get_request_id(request)
+        logger.info(f"[{request_id}] Starting batch analysis for {len(batch_request.deals)} deals")
         
-        # Start build process
-        result = kb_manager.build_knowledge_base(
-            data_sources=request.data_sources,
-            rebuild=request.rebuild,
-            batch_size=request.batch_size
+        # Convert Pydantic models to dict format
+        deals_dict = [deal.dict() for deal in batch_request.deals]
+        
+        # Perform batch analysis
+        result = sentiment_analyzer.analyze_batch_sentiment(
+            deals_data=deals_dict,
+            include_rag_context=batch_request.include_rag_context
         )
         
-        if result["success"]:
-            logger.info(f"[{request_id}] Knowledge base build completed successfully")
-            return KnowledgeBaseBuildResponse(**result)
-        else:
-            logger.error(f"[{request_id}] Knowledge base build failed: {result.get('error')}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=result.get("error", "Build failed")
-            )
+        logger.info(f"[{request_id}] Batch analysis completed: {result.get('successful_analyses', 0)} successful")
+        return result
         
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"[{request_id}] Knowledge base build failed: {str(e)}")
+        logger.error(f"Error in batch analysis: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Batch analysis failed: {str(e)}"
+        )
+
+@router.post("/search", response_model=SearchResponse, tags=["Search"])
+async def search_knowledge_base(
+    request: Request,
+    rag_retriever = Depends(get_rag_retriever),
+    vector_store = Depends(get_vector_store),
+    search_request: SearchRequest = Body(
+        ...,
+        example={
+            "query": "proposal discussion client questions pricing",
+            "top_k": 5,
+            "filters": {
+                "deal_stage": "Proposal",
+                "outcome": "won"
+            },
+            "include_metadata": True
+        }
+    )
+):
+    """
+    Search knowledge base for relevant deals
+    
+    Searches historical deals using:
+    - Vector similarity search
+    - Metadata filtering
+    - Relevance ranking
+    - Configurable result limits
+    """
+    
+    try:
+        request_id = get_request_id(request)
+        logger.info(f"[{request_id}] Searching knowledge base with query: {search_request.query[:50]}...")
+        
+        start_time = datetime.utcnow()
+        
+        # Perform vector search
+        from core.embedding_service import get_embedding_service
+        embedding_service = get_embedding_service()
+        
+        # Generate query embedding
+        query_embedding = embedding_service.encode(search_request.query)
+        
+        # Search vector store
+        search_results = vector_store.search(
+            query_embedding=query_embedding,
+            top_k=search_request.top_k,
+            filters=search_request.filters
+        )
+        
+        # Format results
+        results = []
+        for result in search_results:
+            formatted_result = {
+                'deal_id': result.deal_id,
+                'similarity_score': result.similarity_score,
+                'content': result.combined_text[:500] + "..." if len(result.combined_text) > 500 else result.combined_text
+            }
+            
+            if search_request.include_metadata:
+                formatted_result['metadata'] = result.metadata
+            
+            results.append(formatted_result)
+        
+        end_time = datetime.utcnow()
+        search_time_ms = (end_time - start_time).total_seconds() * 1000
+        
+        response = SearchResponse(
+            query=search_request.query,
+            results=results,
+            total_results=len(results),
+            search_time_ms=search_time_ms
+        )
+        
+        logger.info(f"[{request_id}] Search completed: {len(results)} results in {search_time_ms:.2f}ms")
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error in knowledge base search: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Search failed: {str(e)}"
+        )
+
+@router.post("/knowledge-base/build", response_model=KnowledgeBaseBuildResponse, tags=["Knowledge Base"])
+async def build_knowledge_base(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    kb_builder = Depends(get_knowledge_base_builder),
+    build_request: KnowledgeBaseBuildRequest = Body(
+        ...,
+        example={
+            "data_sources": ["data/final_deal_details.json"],
+            "rebuild": True,
+            "batch_size": 50
+        }
+    )
+):
+    """
+    Build knowledge base from deal data
+    
+    Processes deal data to create searchable knowledge base:
+    - Batch processing for efficiency
+    - Embedding generation
+    - Vector storage
+    - Incremental updates support
+    """
+    
+    try:
+        request_id = get_request_id(request)
+        logger.info(f"[{request_id}] Building knowledge base from {len(build_request.data_sources)} data sources")
+        
+        # Use primary data source (first one or default)
+        data_source = build_request.data_sources[0] if build_request.data_sources else settings.DATA_PATH
+        
+        # Build knowledge base
+        result = kb_builder.build_knowledge_base(
+            data_file_path=data_source,
+            rebuild=build_request.rebuild
+        )
+        
+        # Format response
+        response = KnowledgeBaseBuildResponse(
+            success=result.get('status') == 'completed',
+            total_deals_processed=result.get('total_deals_processed', 0),
+            build_duration_seconds=result.get('build_duration_seconds', 0),
+            knowledge_base_statistics=result.get('knowledge_base_statistics', {}),
+            processing_statistics={
+                'successful_embeddings': result.get('successful_embeddings', 0),
+                'failed_embeddings': result.get('failed_embeddings', 0),
+                'status': result.get('status', 'unknown')
+            }
+        )
+        
+        logger.info(f"[{request_id}] Knowledge base build completed: {response.total_deals_processed} deals processed")
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error building knowledge base: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Knowledge base build failed: {str(e)}"
         )
 
-# # Utility endpoints (unchanged)
-# @router.get(
-#     "/deals/{deal_id}/insights",
-#     summary="Get deal insights",
-#     description="Get comprehensive insights for a specific deal",
-#     tags=["Insights"]
-# )
-# async def get_deal_insights(
-#     deal_id: str,
-#     req: Request,
-#     retriever=Depends(get_rag_retriever),
-#     cache=Depends(get_cache_manager)
-# ):
-#     """Get comprehensive insights for a specific deal"""
+@router.get("/knowledge-base/status", response_model=KnowledgeBaseStatus, tags=["Knowledge Base"])
+async def get_knowledge_base_status(
+    request: Request,
+    kb_builder = Depends(get_knowledge_base_builder),
+    vector_store = Depends(get_vector_store)
+):
+    """
+    Get knowledge base status and statistics
     
-#     request_id = get_request_id(req)
-#     logger.info(f"[{request_id}] Getting insights for deal {deal_id}")
+    Returns:
+    - Current status
+    - Statistics (total deals, vectors, etc.)
+    - Health metrics
+    - Last update information
+    """
     
-#     try:
-#         # Check cache first
-#         cache_key = f"deal_insights_{deal_id}"
-#         cached_insights = cache.get(cache_key)
+    try:
+        request_id = get_request_id(request)
+        logger.info(f"[{request_id}] Getting knowledge base status")
         
-#         if cached_insights:
-#             logger.info(f"[{request_id}] Returning cached insights for deal {deal_id}")
-#             return cached_insights
+        # Get knowledge base stats
+        kb_stats = kb_builder.get_knowledge_base_stats()
         
-#         # Generate insights (placeholder)
-#         insights = {
-#             "deal_id": deal_id,
-#             "summary": "Deal insights would be generated here",
-#             "similar_deals_count": 0,
-#             "success_probability": 0.0,
-#             "risk_factors": [],
-#             "opportunities": [],
-#             "recommendations": [],
-#             "timestamp": datetime.utcnow().isoformat()
-#         }
+        # Get vector store stats
+        vector_stats = vector_store.get_stats()
         
-#         # Cache insights for 1 hour
-#         cache.set(cache_key, insights, ttl=3600)
+        # Determine status
+        status_value = "healthy" if vector_stats.get('total_vectors', 0) > 0 else "empty"
         
-#         return insights
+        response = KnowledgeBaseStatus(
+            status=status_value,
+            stats=kb_stats,
+            health_metrics=vector_stats,
+            last_checked=datetime.utcnow().isoformat()
+        )
         
-#     except Exception as e:
-#         logger.error(f"[{request_id}] Failed to get deal insights: {str(e)}")
-#         raise HTTPException(
-#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-#             detail=f"Failed to get deal insights: {str(e)}"
-#         )
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error getting knowledge base status: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get knowledge base status: {str(e)}"
+        )
 
-# @router.post(
-#     "/cache/clear",
-#     response_model=MessageResponse,
-#     summary="Clear cache",
-#     description="Clear application cache",
-#     tags=["Utilities"]
-# )
-# async def clear_cache(
-#     pattern: Optional[str] = None,
-#     req: Request = None,
-#     cache=Depends(get_cache_manager)
-# ):
-#     """Clear application cache"""
+@router.delete("/knowledge-base/clear", response_model=MessageResponse, tags=["Knowledge Base"])
+async def clear_knowledge_base(
+    request: Request,
+    kb_builder = Depends(get_knowledge_base_builder)
+):
+    """
+    Clear knowledge base
     
-#     request_id = get_request_id(req)
-#     logger.info(f"[{request_id}] Clearing cache with pattern: {pattern}")
+    Removes all stored deal patterns and embeddings.
+    This action cannot be undone.
+    """
     
-#     try:
-#         if pattern:
-#             cleared_count = cache.clear_pattern(pattern)
-#             message = f"Cleared {cleared_count} cache entries matching pattern: {pattern}"
-#         else:
-#             cache.clear_all()
-#             message = "Cleared all cache entries"
+    try:
+        request_id = get_request_id(request)
+        logger.warning(f"[{request_id}] Clearing knowledge base")
         
-#         logger.info(f"[{request_id}] {message}")
+        result = kb_builder.clear_knowledge_base()
         
-#         return MessageResponse(message=message)
-        
-#     except Exception as e:
-#         logger.error(f"[{request_id}] Failed to clear cache: {str(e)}")
-#         raise HTTPException(
-#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-#             detail=f"Failed to clear cache: {str(e)}"
-#         )
+        if result.get('status') == 'cleared':
+            return MessageResponse(message="Knowledge base cleared successfully")
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to clear knowledge base: {result.get('error', 'Unknown error')}"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error clearing knowledge base: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to clear knowledge base: {str(e)}"
+        )
 
-# @router.get(
-#     "/cache/stats",
-#     summary="Get cache statistics",
-#     description="Get cache performance statistics",
-#     tags=["Utilities"]
-# )
-# async def get_cache_stats(
-#     req: Request,
-#     cache=Depends(get_cache_manager)
-# ):
-#     """Get cache statistics"""
+@router.get("/system/stats", tags=["System"])
+async def get_system_stats(
+    request: Request,
+    services: dict = Depends(get_services)
+):
+    """
+    Get system statistics and performance metrics
     
-#     request_id = get_request_id(req)
-#     logger.info(f"[{request_id}] Getting cache statistics")
+    Returns comprehensive system information including:
+    - Service health status
+    - Performance metrics
+    - Configuration settings
+    - Resource usage
+    """
     
-#     try:
-#         stats = cache.get_stats()
+    try:
+        request_id = get_request_id(request)
+        logger.info(f"[{request_id}] Getting system statistics")
         
-#         return {
-#             "cache_stats": stats,
-#             "timestamp": datetime.utcnow().isoformat()
-#         }
+        stats = {
+            'timestamp': datetime.utcnow().isoformat(),
+            'configuration': {
+                'llm_provider': settings.LLM_PROVIDER,
+                'embedding_service': settings.EMBEDDING_SERVICE,
+                'vector_db': settings.VECTOR_DB,
+                'cache_enabled': settings.CACHE_ENABLED,
+                'rate_limit_enabled': settings.RATE_LIMIT_ENABLED,
+                'auth_required': settings.REQUIRE_AUTH
+            },
+            'services': {}
+        }
         
-#     except Exception as e:
-#         logger.error(f"[{request_id}] Failed to get cache stats: {str(e)}")
-#         raise HTTPException(
-#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-#             detail=f"Failed to get cache stats: {str(e)}"
-#         )
+        # Get sentiment analyzer stats
+        sentiment_analyzer = services.get('sentiment_analyzer')
+        if sentiment_analyzer:
+            stats['services']['sentiment_analyzer'] = sentiment_analyzer.get_analyzer_stats()
+        
+        # Get RAG retriever stats
+        rag_retriever = services.get('rag_retriever')
+        if rag_retriever:
+            stats['services']['rag_retriever'] = rag_retriever.get_retrieval_stats()
+        
+        # Get knowledge base stats
+        kb_builder = services.get('knowledge_base_builder')
+        if kb_builder:
+            stats['services']['knowledge_base'] = kb_builder.get_knowledge_base_stats()
+        
+        # Get cache stats
+        cache_manager = services.get('cache_manager')
+        if cache_manager:
+            stats['services']['cache'] = cache_manager.get_stats()
+        
+        return stats
+        
+    except Exception as e:
+        logger.error(f"Error getting system stats: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get system stats: {str(e)}"
+        )
+
+@router.post("/cache/clear", response_model=MessageResponse, tags=["System"])
+async def clear_cache(
+    request: Request,
+    cache_manager = Depends(get_cache_manager),
+    cache_type: Optional[str] = Body(
+        None,
+        example="embedding",
+        description="Type of cache to clear (general, embedding, llm) or null for all"
+    )
+):
+    """
+    Clear cache by type or all cache
+    
+    Args:
+        cache_type: Type of cache to clear (general, embedding, llm) or None for all
+    """
+    
+    try:
+        request_id = get_request_id(request)
+        logger.info(f"[{request_id}] Clearing cache: {cache_type or 'all'}")
+        
+        success = cache_manager.clear_cache(cache_type)
+        
+        if success:
+            message = f"Cache cleared successfully: {cache_type or 'all'}"
+            return MessageResponse(message=message)
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to clear cache"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error clearing cache: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to clear cache: {str(e)}"
+        )
