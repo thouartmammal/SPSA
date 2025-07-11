@@ -7,7 +7,6 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, validator
 
 from config.settings import settings
-
 logger = logging.getLogger(__name__)
 
 # Create router

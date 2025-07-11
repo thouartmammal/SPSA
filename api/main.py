@@ -99,9 +99,17 @@ async def initialize_services():
             vector_store=service_registry['vector_store'],
             data_processor=service_registry['data_processor']
         )
-        
+
+        # Initialize client sentiment analyzer
+        logger.info("Initializing client sentiment analyzer...")
+        from llm.client_sentiment_analyzer import create_client_sentiment_analyzer
+        service_registry['client_sentiment_analyzer'] = create_client_sentiment_analyzer(
+            llm_provider=settings.LLM_PROVIDER,
+            llm_config=settings.get_llm_config()
+        )
+
         # Initialize sentiment analyzer
-        logger.info("Initializing sentiment analyzer...")
+        logger.info("Initializing sales sentiment analyzer...")
         from llm.sentiment_analyzer import create_sentiment_analyzer
         service_registry['sentiment_analyzer'] = create_sentiment_analyzer(
             llm_provider=settings.LLM_PROVIDER,
