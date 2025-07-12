@@ -2,7 +2,7 @@ import logging
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
-from llm.llm_clients import LLMClient
+from llm.llm_clients import LLMClient, create_llm_client
 from rag.retriever import RAGRetriever
 from core.data_processor import DealDataProcessor
 from config.settings import settings
@@ -37,12 +37,31 @@ class ClientSentimentAnalyzer:
         # Create client-specific context builder
         self.client_context_builder = create_client_context_builder(llm_client)
         
-        # Use client-specific prompt
-        self.llm_client.prompt_manager.prompt_file_path = "prompts/client_sentiment_prompt.txt"
-        self.llm_client.prompt_manager.template = self.llm_client.prompt_manager._load_prompt_template()
+        # Create a separate LLM client for client sentiment with client-specific prompt
+        self.client_llm_client = self._create_client_llm_client()
         
         logger.info("Client Sentiment Analyzer initialized")
-
+    
+    def _create_client_llm_client(self) -> LLMClient:
+        """Create LLM client specifically for client sentiment analysis"""
+        try:
+            # Create new LLM client with client-specific prompt
+            client_llm_client = create_llm_client(
+                provider_name=settings.LLM_PROVIDER,
+                **settings.get_llm_config()
+            )
+            
+            # Set client-specific prompt file path
+            client_llm_client.prompt_manager.prompt_file_path = "prompts/client_sentiment_prompt.txt"
+            # Force reload the prompt template
+            client_llm_client.prompt_manager.template = client_llm_client.prompt_manager._load_prompt_template()
+            
+            return client_llm_client
+            
+        except Exception as e:
+            logger.error(f"Error creating client LLM client: {e}")
+            # Fallback to main LLM client
+            return self.llm_client
     
     def analyze_client_sentiment(
         self,
@@ -136,17 +155,19 @@ class ClientSentimentAnalyzer:
                         for activity in raw_activities
                     ]
                     
-                    rag_context = self.rag_retriever.retrieve_relevant_examples(
+                    # Use client context builder for RAG context
+                    rag_context = self.client_context_builder.build_context(
                         deal_id=deal_id,
                         activities=all_activities,
-                        metadata=rag_metadata
+                        metadata=rag_metadata,
+                        similar_deals=self._get_similar_deals(deal_id, all_activities, rag_metadata)
                     )
                 except Exception as e:
                     logger.error(f"Error retrieving RAG context: {e}")
                     rag_context = "Error retrieving historical context."
             
-            # Analyze client sentiment using LLM
-            sentiment_result = self.llm_client.analyze_sentiment(
+            # Analyze client sentiment using client-specific LLM
+            sentiment_result = self.client_llm_client.analyze_sentiment(
                 deal_id=deal_id,
                 activities_text=activities_text,
                 rag_context=rag_context,
@@ -154,17 +175,18 @@ class ClientSentimentAnalyzer:
                 total_activities=len(client_activities)
             )
             
-            # Add analysis metadata
+            # Add client-specific analysis metadata
             sentiment_result.update({
                 'analysis_metadata': {
                     'deal_id': deal_id,
                     'analysis_timestamp': datetime.utcnow().isoformat(),
-                    'llm_provider': self.llm_client.provider.get_provider_name(),
+                    'llm_provider': self.client_llm_client.provider.get_provider_name(),
                     'included_rag_context': include_rag_context,
                     'total_client_activities_analyzed': len(client_activities),
                     'total_deal_activities': len(raw_activities),
                     'rag_context_length': len(rag_context) if rag_context else 0,
-                    'analysis_type': 'client_sentiment'
+                    'analysis_type': 'client_sentiment',
+                    'client_activity_filter_applied': True
                 }
             })
             
@@ -179,6 +201,25 @@ class ClientSentimentAnalyzer:
                 'timestamp': datetime.utcnow().isoformat(),
                 'analysis_type': 'client_sentiment'
             }
+    
+    def _get_similar_deals(self, deal_id: str, activities: List[Dict[str, Any]], metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Get similar deals using RAG retriever"""
+        try:
+            # Get similar deals from RAG retriever
+            similar_deals_context = self.rag_retriever.retrieve_relevant_examples(
+                deal_id=deal_id,
+                activities=activities,
+                metadata=metadata
+            )
+            
+            # Parse the context to extract similar deals
+            # This is a simplified approach - in a real implementation, you'd want to 
+            # modify the RAG retriever to return structured data
+            return []  # Placeholder - the context builder will handle this
+            
+        except Exception as e:
+            logger.error(f"Error getting similar deals: {e}")
+            return []
     
     def _filter_client_activities(self, activities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -376,7 +417,7 @@ class ClientSentimentAnalyzer:
         
         try:
             return {
-                'llm_provider': self.llm_client.provider.get_provider_name(),
+                'llm_provider': self.client_llm_client.provider.get_provider_name(),
                 'rag_retriever_stats': self.rag_retriever.get_retrieval_stats(),
                 'configuration': {
                     'llm_max_tokens': settings.LLM_MAX_TOKENS,
@@ -405,7 +446,6 @@ def create_client_sentiment_analyzer(
         llm_config = settings.get_llm_config()
     
     # Create LLM client
-    from llm.llm_clients import create_llm_client
     llm_client = create_llm_client(llm_provider, **llm_config)
     
     # Create RAG retriever

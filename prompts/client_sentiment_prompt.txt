@@ -55,29 +55,29 @@ The following client-initiated activities have been analyzed for engagement and 
 Provide your analysis in the following JSON format:
 
 ```json
-{
+{{
     "overall_sentiment": "high_interest|engaged|neutral|disengaged|not_interested",
     "sentiment_score": 0.65,
     "confidence": 0.85,
-    "activity_breakdown": {
-        "email": {
+    "activity_breakdown": {{
+        "email": {{
             "sentiment": "engaged",
             "sentiment_score": 0.5,
             "key_indicators": ["Asking detailed questions", "Quick response times"],
             "count": 3
-        },
-        "meeting": {
+        }},
+        "meeting": {{
             "sentiment": "neutral",
             "sentiment_score": 0.1,
             "key_indicators": ["Standard meeting participation"],
             "count": 2
-        }
-    },
-    "client_engagement_indicators": {
+        }}
+    }},
+    "client_engagement_indicators": {{
         "response_pattern": "quick|normal|delayed",
         "initiative_level": "proactive|responsive|passive",
         "decision_readiness": "ready|evaluating|early_stage"
-    },
+    }},
     "reasoning": "Detailed explanation of client engagement level and buying intent based on their communications and behavior",
     "buying_signals": ["List specific positive buying signals observed"],
     "concern_indicators": ["List specific concerns or hesitation signals"],
@@ -85,4 +85,4 @@ Provide your analysis in the following JSON format:
     "decision_timeline": "immediate|near_term|long_term|unclear",
     "recommended_actions": ["Specific actions to improve client engagement"],
     "client_risk_level": "low|medium|high"
-}
+}}

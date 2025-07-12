@@ -100,18 +100,18 @@ async def initialize_services():
             data_processor=service_registry['data_processor']
         )
 
-        # Initialize client sentiment analyzer
-        logger.info("Initializing client sentiment analyzer...")
-        from llm.client_sentiment_analyzer import create_client_sentiment_analyzer
-        service_registry['client_sentiment_analyzer'] = create_client_sentiment_analyzer(
+        # Initialize sentiment analyzer (sales)
+        logger.info("Initializing sales sentiment analyzer...")
+        from llm.sentiment_analyzer import create_sentiment_analyzer
+        service_registry['sentiment_analyzer'] = create_sentiment_analyzer(
             llm_provider=settings.LLM_PROVIDER,
             llm_config=settings.get_llm_config()
         )
 
-        # Initialize sentiment analyzer
-        logger.info("Initializing sales sentiment analyzer...")
-        from llm.sentiment_analyzer import create_sentiment_analyzer
-        service_registry['sentiment_analyzer'] = create_sentiment_analyzer(
+        # Initialize client sentiment analyzer
+        logger.info("Initializing client sentiment analyzer...")
+        from llm.client_sentiment_analyzer import create_client_sentiment_analyzer
+        service_registry['client_sentiment_analyzer'] = create_client_sentiment_analyzer(
             llm_provider=settings.LLM_PROVIDER,
             llm_config=settings.get_llm_config()
         )
@@ -122,7 +122,7 @@ async def initialize_services():
     except Exception as e:
         logger.error(f"Service initialization failed: {e}")
         raise
-
+    
 async def build_knowledge_base_on_startup():
     """Build knowledge base on startup if configured"""
     try:
@@ -182,7 +182,7 @@ async def perform_health_checks():
         except Exception as e:
             health_results['vector_store'] = {'status': 'unhealthy', 'error': str(e)}
     
-    # Check sentiment analyzer
+    # Check sentiment analyzer (sales)
     sentiment_analyzer = service_registry.get('sentiment_analyzer')
     if sentiment_analyzer:
         try:
@@ -190,6 +190,15 @@ async def perform_health_checks():
             health_results['sentiment_analyzer'] = {'status': 'healthy', 'stats': stats}
         except Exception as e:
             health_results['sentiment_analyzer'] = {'status': 'unhealthy', 'error': str(e)}
+    
+    # Check client sentiment analyzer
+    client_sentiment_analyzer = service_registry.get('client_sentiment_analyzer')
+    if client_sentiment_analyzer:
+        try:
+            stats = client_sentiment_analyzer.get_analyzer_stats()
+            health_results['client_sentiment_analyzer'] = {'status': 'healthy', 'stats': stats}
+        except Exception as e:
+            health_results['client_sentiment_analyzer'] = {'status': 'unhealthy', 'error': str(e)}
     
     # Log health check results
     for service, health in health_results.items():
@@ -321,7 +330,7 @@ async def health_check():
                     "error": str(e)
                 }
         
-        # Check sentiment analyzer
+        # Check sentiment analyzer (sales)
         sentiment_analyzer = service_registry.get('sentiment_analyzer')
         if sentiment_analyzer:
             try:
@@ -332,6 +341,21 @@ async def health_check():
                 }
             except Exception as e:
                 health_results["services"]["sentiment_analyzer"] = {
+                    "status": "unhealthy",
+                    "error": str(e)
+                }
+        
+        # Check client sentiment analyzer
+        client_sentiment_analyzer = service_registry.get('client_sentiment_analyzer')
+        if client_sentiment_analyzer:
+            try:
+                stats = client_sentiment_analyzer.get_analyzer_stats()
+                health_results["services"]["client_sentiment_analyzer"] = {
+                    "status": "healthy",
+                    "stats": stats
+                }
+            except Exception as e:
+                health_results["services"]["client_sentiment_analyzer"] = {
                     "status": "unhealthy",
                     "error": str(e)
                 }
@@ -358,7 +382,7 @@ async def health_check():
                 "timestamp": datetime.utcnow().isoformat()
             }
         )
-
+    
 # Make service registry available to routes
 app.state.services = service_registry
 

@@ -205,6 +205,28 @@ class SentimentAnalysisResponse(BaseModel):
     context_analysis_notes: List[str]
     timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
+class ClientEngagementIndicators(BaseModel):
+    """Client engagement indicators"""
+    response_pattern: str
+    initiative_level: str
+    decision_readiness: str
+
+class ClientSentimentAnalysisResponse(BaseModel):
+    """Client sentiment analysis response"""
+    overall_sentiment: str
+    sentiment_score: float = Field(..., ge=-1.0, le=1.0)
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    activity_breakdown: Dict[str, ActivityBreakdownItem]
+    client_engagement_indicators: ClientEngagementIndicators
+    reasoning: str
+    buying_signals: List[str]
+    concern_indicators: List[str]
+    engagement_opportunities: List[str]
+    decision_timeline: str
+    recommended_actions: List[str]
+    client_risk_level: str
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+
 class SearchResponse(BaseModel):
     """Search response"""
     query: str
@@ -501,6 +523,193 @@ async def analyze_batch_sentiment(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Batch analysis failed: {str(e)}"
+        )
+    
+# Add these routes to your existing api/routes.py file
+
+def get_client_sentiment_analyzer(services: dict = Depends(get_services)):
+    """Get client sentiment analyzer service"""
+    analyzer = services.get('client_sentiment_analyzer')
+    if not analyzer:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Client sentiment analyzer service not available"
+        )
+    return analyzer
+
+# Add client sentiment analysis endpoints
+
+@router.post("/analyze/client-sentiment", response_model=SentimentAnalysisResponse, tags=["Client Analysis"])
+async def analyze_client_sentiment(
+    request: Request,
+    client_sentiment_analyzer = Depends(get_client_sentiment_analyzer),
+    analysis_request: AnalysisRequest = Body(
+        ...,
+        example={
+            "deal_data": {
+                "deal_id": "12345678",
+                "activities": [
+                    {
+                        "sent_at": "2023-11-21T14:39:17.123Z",
+                        "from": "client@company.com",
+                        "to": ["sales@ourcompany.com"],
+                        "subject": "RE: Proposal Discussion",
+                        "body": "Thanks for the proposal. We have some questions about pricing and would like to schedule a call to discuss implementation timeline.",
+                        "state": "email",
+                        "direction": "incoming",
+                        "activity_type": "email"
+                    },
+                    {
+                        "id": "meeting_123",
+                        "internal_meeting_notes": "Client showed strong interest in the solution and asked detailed questions about ROI",
+                        "meeting_title": "Product Demo with Client",
+                        "meeting_location": "Client Office",
+                        "meeting_location_type": "CLIENT_OFFICE",
+                        "meeting_outcome": "POSITIVE",
+                        "meeting_start_time": "2023-11-23T15:00:00.000Z",
+                        "meeting_end_time": "2023-11-23T16:00:00.000Z",
+                        "activity_type": "meeting"
+                    }
+                ],
+                "amount": "50000",
+                "closedate": "2023-12-01T10:00:00.000Z",
+                "createdate": "2023-11-01T08:00:00.000Z",
+                "dealstage": "Proposal",
+                "deal_stage_probability": "0.75",
+                "dealtype": "newbusiness"
+            },
+            "include_rag_context": True,
+            "analysis_options": {
+                "focus_area": "client_engagement",
+                "include_benchmarking": True
+            }
+        }
+    )
+):
+    """
+    Analyze client sentiment and engagement from deal activities
+    
+    This endpoint analyzes client sentiment and buying intent from deal activities using:
+    - RAG retrieval of relevant historical client engagement examples
+    - LLM-powered client sentiment analysis
+    - Client-specific context engineering
+    
+    Returns detailed client sentiment analysis including:
+    - Overall client sentiment score and confidence
+    - Client activity breakdown by type
+    - Client engagement indicators
+    - Buying signals and concern indicators
+    - Decision timeline assessment
+    - Actionable recommendations for client engagement
+    """
+    
+    try:
+        request_id = get_request_id(request)
+        logger.info(f"[{request_id}] Analyzing client sentiment for deal {analysis_request.deal_data.deal_id}")
+        
+        # Convert Pydantic model to dict format expected by analyzer
+        deal_dict = analysis_request.deal_data.dict()
+        
+        # Perform client sentiment analysis
+        result = client_sentiment_analyzer.analyze_client_sentiment(
+            deal_data=deal_dict,
+            include_rag_context=analysis_request.include_rag_context
+        )
+        
+        # Check for errors
+        if 'error' in result:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Client analysis failed: {result['error']}"
+            )
+        
+        logger.info(f"[{request_id}] Client sentiment analysis completed for deal {analysis_request.deal_data.deal_id}")
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in client sentiment analysis: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Client analysis failed: {str(e)}"
+        )
+
+@router.post("/analyze/client-batch", response_model=BatchAnalysisResponse, tags=["Client Analysis"])
+async def analyze_batch_client_sentiment(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    client_sentiment_analyzer = Depends(get_client_sentiment_analyzer),
+    batch_request: BatchAnalysisRequest = Body(
+        ...,
+        example={
+            "deals": [
+                {
+                    "deal_id": "deal_001",
+                    "activities": [
+                        {
+                            "activity_type": "email",
+                            "subject": "Questions about your proposal",
+                            "body": "We're interested in moving forward. Can we schedule a call to discuss implementation?",
+                            "direction": "incoming"
+                        }
+                    ],
+                    "amount": "50000",
+                    "dealstage": "Proposal",
+                    "dealtype": "newbusiness"
+                },
+                {
+                    "deal_id": "deal_002",
+                    "activities": [
+                        {
+                            "activity_type": "meeting",
+                            "meeting_title": "Product Demo",
+                            "internal_meeting_notes": "Client was very engaged and asked lots of technical questions"
+                        }
+                    ],
+                    "amount": "75000",
+                    "dealstage": "Demo",
+                    "dealtype": "newbusiness"
+                }
+            ],
+            "include_rag_context": True,
+            "batch_size": 10,
+            "analysis_type": "client_sentiment"
+        }
+    )
+):
+    """
+    Analyze client sentiment for multiple deals in batch
+    
+    Processes multiple deals efficiently for client sentiment analysis with:
+    - Batch processing for performance
+    - Individual error handling
+    - Progress tracking
+    - Detailed batch statistics
+    - Client-specific filtering and analysis
+    """
+    
+    try:
+        request_id = get_request_id(request)
+        logger.info(f"[{request_id}] Starting batch client analysis for {len(batch_request.deals)} deals")
+        
+        # Convert Pydantic models to dict format
+        deals_dict = [deal.dict() for deal in batch_request.deals]
+        
+        # Perform batch client analysis
+        result = client_sentiment_analyzer.analyze_batch_client_sentiment(
+            deals_data=deals_dict,
+            include_rag_context=batch_request.include_rag_context
+        )
+        
+        logger.info(f"[{request_id}] Batch client analysis completed: {result.get('successful_analyses', 0)} successful")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in batch client analysis: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Batch client analysis failed: {str(e)}"
         )
 
 @router.post("/search", response_model=SearchResponse, tags=["Search"])
