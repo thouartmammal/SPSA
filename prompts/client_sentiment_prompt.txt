@@ -18,12 +18,13 @@ The following client-initiated activities have been analyzed for engagement and 
 ## CLIENT ANALYSIS FRAMEWORK
 
 ### CLIENT SENTIMENT SCORING SCALE (-1.0 to +1.0)
-- **+0.8 to +1.0 (High Interest)**: Strong buying signals, proactive engagement, decision-making behavior
-- **+0.4 to +0.7 (Engaged)**: Active participation, asking relevant questions, moving process forward
+- **+0.8 to +1.0 (Exceptional Positive)**: Strong buying signals, proactive engagement, decision-making behavior
+- **+0.4 to +0.7 (Positive)**: Active participation, asking relevant questions, moving process forward
 - **0.0 to +0.3 (Neutral-Positive)**: Professional responses, basic engagement
 - **-0.3 to -0.1 (Neutral-Negative)**: Delayed responses, minimal engagement, routine communication
-- **-0.4 to -0.7 (Disengaged)**: Poor responsiveness, avoiding decisions, showing concerns
-- **-0.8 to -1.0 (Not Interested)**: No engagement, canceling meetings, indicating no interest
+- **-0.4 to -0.7 (Negative)**: Poor responsiveness, avoiding decisions, showing concerns
+- **-0.8 to -1.0 (Critical Negative)**: No engagement, canceling meetings, indicating no interest
+
 
 ### POSITIVE CLIENT INDICATORS
 - Asking detailed questions about implementation
@@ -56,18 +57,18 @@ Provide your analysis in the following JSON format:
 
 ```json
 {{
-    "overall_sentiment": "high_interest|engaged|neutral|disengaged|not_interested",
+    "overall_sentiment": "exceptional_positive|positive|neutral|negative|critical_negative",
     "sentiment_score": 0.65,
     "confidence": 0.85,
     "activity_breakdown": {{
         "email": {{
-            "sentiment": "engaged",
+            "sentiment": "positive",
             "sentiment_score": 0.5,
             "key_indicators": ["Asking detailed questions", "Quick response times"],
             "count": 3
         }},
         "meeting": {{
-            "sentiment": "neutral",
+            "sentiment": "negative",
             "sentiment_score": 0.1,
             "key_indicators": ["Standard meeting participation"],
             "count": 2

@@ -5,7 +5,6 @@ import numpy as np
 
 from core.embedding_service import EmbeddingService
 from core.vector_store import VectorStore
-from rag.context_builder import RAGContextBuilder
 from models.schemas import VectorSearchResult, DealPattern
 from config.settings import settings
 
@@ -15,13 +14,15 @@ class RAGRetriever:
     """
     Focused RAG retriever that finds relevant examples from past deals
     based on client behavior, sentiment patterns, language tone, and deal progression
+    Supports both sales and client context builders
     """
     
     def __init__(
         self,
         embedding_service: EmbeddingService,
         vector_store: VectorStore,
-        context_builder: RAGContextBuilder = None
+        sales_context_builder=None,
+        client_context_builder=None
     ):
         """
         Initialize RAG retriever
@@ -29,23 +30,26 @@ class RAGRetriever:
         Args:
             embedding_service: Service for generating embeddings
             vector_store: Vector database for similarity search
-            context_builder: Context builder for formatting results
+            sales_context_builder: Context builder for sales analysis
+            client_context_builder: Context builder for client analysis
         """
         self.embedding_service = embedding_service
         self.vector_store = vector_store
-        self.context_builder = context_builder or RAGContextBuilder()
+        self.sales_context_builder = sales_context_builder
+        self.client_context_builder = client_context_builder
         
         # Configuration from settings
         self.top_k = settings.RAG_TOP_K
         self.similarity_threshold = settings.RAG_SIMILARITY_THRESHOLD
         
-        logger.info("RAG Retriever initialized")
+        logger.info("RAG Retriever initialized with both sales and client context builders")
     
     def retrieve_relevant_examples(
         self,
         deal_id: str,
         activities: List[Dict[str, Any]],
-        metadata: Dict[str, Any]
+        metadata: Dict[str, Any],
+        analysis_type: str = "sales"
     ) -> str:
         """
         Retrieve relevant examples from past deals and build context
@@ -54,6 +58,7 @@ class RAGRetriever:
             deal_id: Current deal identifier
             activities: Deal activities
             metadata: Deal metadata
+            analysis_type: Type of analysis ("sales" or "client")
             
         Returns:
             Formatted context string with relevant examples
@@ -77,20 +82,67 @@ class RAGRetriever:
             # Step 3: Filter and rank by relevance
             relevant_deals = self._filter_and_rank_deals(similar_deals, metadata)
             
-            # Step 4: Build context using context builder
-            context = self.context_builder.build_context(
+            # Step 4: Build context using appropriate context builder
+            context = self._build_context_by_type(
+                analysis_type=analysis_type,
                 deal_id=deal_id,
                 activities=activities,
                 metadata=metadata,
                 similar_deals=relevant_deals
             )
             
-            logger.info(f"Retrieved {len(relevant_deals)} relevant examples for deal {deal_id}")
+            logger.info(f"Retrieved {len(relevant_deals)} relevant examples for {analysis_type} analysis of deal {deal_id}")
             return context
             
         except Exception as e:
             logger.error(f"Error retrieving examples for deal {deal_id}: {e}")
             return "Error retrieving historical context."
+    
+    def _build_context_by_type(
+        self,
+        analysis_type: str,
+        deal_id: str,
+        activities: List[Dict[str, Any]],
+        metadata: Dict[str, Any],
+        similar_deals: List[Dict[str, Any]]
+    ) -> str:
+        """
+        Build context using the appropriate context builder based on analysis type
+        
+        Args:
+            analysis_type: Type of analysis ("sales" or "client")
+            deal_id: Current deal identifier
+            activities: Deal activities
+            metadata: Deal metadata
+            similar_deals: Similar deals from search
+            
+        Returns:
+            Formatted context string
+        """
+        
+        if analysis_type == "client":
+            if self.client_context_builder:
+                return self.client_context_builder.build_context(
+                    deal_id=deal_id,
+                    activities=activities,
+                    metadata=metadata,
+                    similar_deals=similar_deals
+                )
+            else:
+                logger.warning("Client context builder not available, falling back to sales context builder")
+                analysis_type = "sales"
+        
+        # Default to sales context builder
+        if self.sales_context_builder:
+            return self.sales_context_builder.build_context(
+                deal_id=deal_id,
+                activities=activities,
+                metadata=metadata,
+                similar_deals=similar_deals
+            )
+        else:
+            logger.error("No context builder available")
+            return "No context builder available for analysis."
     
     def _create_search_query(
         self, 
@@ -242,7 +294,6 @@ class RAGRetriever:
             # Convert search results to deal format
             similar_deals = []
             for result in search_results:
-                # logger.info(f"Processing deal: {result.deal_id} with similarity score: {result.similarity_score} \n Combined text : {result.combined_text}")
                 deal_data = {
                     'deal_id': result.deal_id,
                     'similarity_score': result.similarity_score,
@@ -357,8 +408,6 @@ class RAGRetriever:
             Relevance score (0-1)
         """
         
-        # logger.info(f"Similar deal: {similar_deal.get('deal_id')} similarity score {similar_deal.get('similarity_score')}")
-
         similar_metadata = similar_deal.get('metadata', {})
         score = similar_deal.get('similarity_score', 0.0)
 
@@ -386,7 +435,7 @@ class RAGRetriever:
         if current_type and similar_type and current_type == similar_type:
             score *= 1.05  # tiny 5% boost
 
-        logger.info(f"Score: {score}")
+        logger.debug(f"Relevance score: {score}")
         
         return min(score, 1.0)  # Cap at 1.0
     
@@ -394,11 +443,21 @@ class RAGRetriever:
         """Get retrieval statistics"""
         try:
             vector_stats = self.vector_store.get_stats()
+            
+            # Get enabled components from both context builders
+            enabled_components = []
+            if self.sales_context_builder:
+                enabled_components.extend(self.sales_context_builder.get_enabled_components())
+            if self.client_context_builder:
+                enabled_components.extend(self.client_context_builder.get_enabled_components())
+            
             return {
                 'vector_store_stats': vector_stats,
                 'top_k': self.top_k,
                 'similarity_threshold': self.similarity_threshold,
-                'enabled_context_components': self.context_builder.get_enabled_components()
+                'enabled_context_components': enabled_components,
+                'has_sales_context_builder': self.sales_context_builder is not None,
+                'has_client_context_builder': self.client_context_builder is not None
             }
         except Exception as e:
             logger.error(f"Error getting retrieval stats: {e}")
@@ -408,9 +467,10 @@ class RAGRetriever:
 def create_rag_retriever(
     embedding_service: EmbeddingService = None,
     vector_store: VectorStore = None,
-    context_builder: RAGContextBuilder = None
+    sales_context_builder=None,
+    client_context_builder=None
 ) -> RAGRetriever:
-    """Create RAG retriever instance"""
+    """Create RAG retriever instance with both context builders"""
     
     if not embedding_service:
         from core.embedding_service import get_embedding_service
@@ -420,23 +480,37 @@ def create_rag_retriever(
         from core.vector_store import get_vector_store
         vector_store = get_vector_store()
     
-    if not context_builder:
-        # Import LLM client creation
+    # Create context builders if not provided
+    if not sales_context_builder or not client_context_builder:
         from llm.llm_clients import create_llm_client
         from config.settings import settings
         
-        # Create LLM client for context generation
-        llm_client = create_llm_client(
-            provider_name=settings.LLM_PROVIDER,
-            **settings.get_llm_config()
-        )
+        # Create LLM clients for context generation
+        if not sales_context_builder:
+            sales_llm_client = create_llm_client(
+                provider_name=settings.LLM_PROVIDER,
+                prompt_file_path="prompts/sales_context_analysis_prompt.txt",
+                analysis_type="sales",
+                **settings.get_llm_config()
+            )
+            
+            from rag.sales_context_builder import create_sales_context_builder
+            sales_context_builder = create_sales_context_builder(llm_client=sales_llm_client)
         
-        # Create context builder with LLM client
-        from rag.context_builder import create_context_builder
-        context_builder = create_context_builder(llm_client=llm_client)
+        if not client_context_builder:
+            client_llm_client = create_llm_client(
+                provider_name=settings.LLM_PROVIDER,
+                prompt_file_path="prompts/client_context_analysis_prompt.txt",
+                analysis_type="client",
+                **settings.get_llm_config()
+            )
+            
+            from rag.client_context_builder import create_client_context_builder
+            client_context_builder = create_client_context_builder(llm_client=client_llm_client)
     
     return RAGRetriever(
         embedding_service=embedding_service,
         vector_store=vector_store,
-        context_builder=context_builder
+        sales_context_builder=sales_context_builder,
+        client_context_builder=client_context_builder
     )

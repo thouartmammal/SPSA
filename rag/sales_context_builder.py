@@ -248,7 +248,7 @@ Keep each section concise and actionable.
         logger.warning("remove_component() not applicable for LLM-based context builder")
 
 # Factory function for backward compatibility
-def create_context_builder(llm_client=None) -> LLMContextBuilder:
+def create_sales_context_builder(llm_client=None) -> LLMContextBuilder:
     """Create LLM context builder instance"""
     return LLMContextBuilder(llm_client=llm_client)
 

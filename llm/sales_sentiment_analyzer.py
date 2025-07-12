@@ -10,9 +10,9 @@ from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
-class SentimentAnalyzer:
+class SalesSentimentAnalyzer:
     """
-    Simplified sentiment analyzer focused on RAG-based sentiment analysis
+    Sales sentiment analyzer focused on RAG-based sentiment analysis
     Uses RAG retriever to get relevant examples for context
     """
     
@@ -23,7 +23,7 @@ class SentimentAnalyzer:
         data_processor: DealDataProcessor = None
     ):
         """
-        Initialize sentiment analyzer
+        Initialize sales sentiment analyzer
         
         Args:
             llm_client: LLM client for sentiment analysis
@@ -34,7 +34,7 @@ class SentimentAnalyzer:
         self.rag_retriever = rag_retriever
         self.data_processor = data_processor
         
-        logger.info("Sentiment Analyzer initialized")
+        logger.info("Sales Sentiment Analyzer initialized")
     
     def analyze_deal_sentiment(
         self,
@@ -54,7 +54,7 @@ class SentimentAnalyzer:
         
         try:
             deal_id = deal_data.get('deal_id', 'unknown')
-            logger.info(f"Analyzing sentiment for deal {deal_id}")
+            logger.info(f"Analyzing sales sentiment for deal {deal_id}")
             
             # Always extract RAG metadata directly from deal_data root level
             rag_metadata = {
@@ -110,15 +110,15 @@ class SentimentAnalyzer:
                 ]
                 activities_text = self._create_activities_text(raw_activities)
             
-            # logger.info(f"Current deal metadata: {rag_metadata}")
-            # Get RAG context if requested
+            # Get RAG context if requested (specify sales analysis type)
             rag_context = ""
             if include_rag_context:
                 try:
                     rag_context = self.rag_retriever.retrieve_relevant_examples(
                         deal_id=deal_id,
                         activities=activities,
-                        metadata=rag_metadata
+                        metadata=rag_metadata,
+                        analysis_type="sales"  # Specify sales analysis
                     )
                 except Exception as e:
                     logger.error(f"Error retrieving RAG context: {e}")
@@ -141,19 +141,21 @@ class SentimentAnalyzer:
                     'llm_provider': self.llm_client.provider.get_provider_name(),
                     'included_rag_context': include_rag_context,
                     'total_activities_analyzed': len(activities),
-                    'rag_context_length': len(rag_context) if rag_context else 0
+                    'rag_context_length': len(rag_context) if rag_context else 0,
+                    'analysis_type': 'sales_sentiment'
                 }
             })
             
-            logger.info(f"Sentiment analysis completed for deal {deal_id}")
+            logger.info(f"Sales sentiment analysis completed for deal {deal_id}")
             return sentiment_result
             
         except Exception as e:
-            logger.error(f"Error analyzing sentiment for deal {deal_data.get('deal_id', 'unknown')}: {e}")
+            logger.error(f"Error analyzing sales sentiment for deal {deal_data.get('deal_id', 'unknown')}: {e}")
             return {
                 'error': str(e),
                 'deal_id': deal_data.get('deal_id', 'unknown'),
-                'timestamp': datetime.utcnow().isoformat()
+                'timestamp': datetime.utcnow().isoformat(),
+                'analysis_type': 'sales_sentiment'
             }
     
     def _extract_raw_activity_content(self, activity: Dict[str, Any]) -> str:
@@ -294,7 +296,7 @@ class SentimentAnalyzer:
         successful_analyses = 0
         failed_analyses = 0
         
-        logger.info(f"Starting batch sentiment analysis for {len(deals_data)} deals")
+        logger.info(f"Starting batch sales sentiment analysis for {len(deals_data)} deals")
         
         for i, deal_data in enumerate(deals_data):
             try:
@@ -317,7 +319,8 @@ class SentimentAnalyzer:
                 results.append({
                     'error': str(e),
                     'deal_id': deal_data.get('deal_id', 'unknown'),
-                    'timestamp': datetime.utcnow().isoformat()
+                    'timestamp': datetime.utcnow().isoformat(),
+                    'analysis_type': 'sales_sentiment'
                 })
         
         end_time = datetime.utcnow()
@@ -329,10 +332,11 @@ class SentimentAnalyzer:
             'failed_analyses': failed_analyses,
             'results': results,
             'processing_time_seconds': processing_time,
-            'timestamp': datetime.utcnow().isoformat()
+            'timestamp': datetime.utcnow().isoformat(),
+            'analysis_type': 'sales_sentiment_batch'
         }
         
-        logger.info(f"Batch sentiment analysis completed: {successful_analyses} successful, {failed_analyses} failed")
+        logger.info(f"Batch sales sentiment analysis completed: {successful_analyses} successful, {failed_analyses} failed")
         return batch_summary
     
     def get_analyzer_stats(self) -> Dict[str, Any]:
@@ -348,6 +352,7 @@ class SentimentAnalyzer:
                     'rag_top_k': settings.RAG_TOP_K,
                     'rag_similarity_threshold': settings.RAG_SIMILARITY_THRESHOLD
                 },
+                'analysis_type': 'sales_sentiment',
                 'timestamp': datetime.utcnow().isoformat()
             }
         except Exception as e:
@@ -355,11 +360,11 @@ class SentimentAnalyzer:
             return {'error': str(e)}
 
 # Factory function
-def create_sentiment_analyzer(
+def create_sales_sentiment_analyzer(
     llm_provider: str = None,
     llm_config: Dict[str, Any] = None
-) -> SentimentAnalyzer:
-    """Create sentiment analyzer instance"""
+) -> SalesSentimentAnalyzer:
+    """Create sales sentiment analyzer instance"""
     
     # Get LLM provider and config from settings if not provided
     if not llm_provider:
@@ -368,11 +373,16 @@ def create_sentiment_analyzer(
     if not llm_config:
         llm_config = settings.get_llm_config()
     
-    # Create LLM client
+    # Create LLM client specifically for sales sentiment analysis
     from llm.llm_clients import create_llm_client
-    llm_client = create_llm_client(llm_provider, **llm_config)
+    llm_client = create_llm_client(
+        provider_name=llm_provider,
+        prompt_file_path="prompts/sales_sentiment_prompt.txt",
+        analysis_type="sales",
+        **llm_config
+    )
     
-    # Create RAG retriever
+    # Create RAG retriever with both context builders
     from rag.retriever import create_rag_retriever
     rag_retriever = create_rag_retriever()
     
@@ -382,7 +392,7 @@ def create_sentiment_analyzer(
     embedding_service = get_embedding_service()
     data_processor = DealDataProcessor(embedding_service)
     
-    return SentimentAnalyzer(
+    return SalesSentimentAnalyzer(
         llm_client=llm_client,
         rag_retriever=rag_retriever,
         data_processor=data_processor

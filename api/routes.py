@@ -188,8 +188,8 @@ class DealMomentumIndicators(BaseModel):
     client_engagement_trend: str
     competitive_position: str
 
-class SentimentAnalysisResponse(BaseModel):
-    """Sentiment analysis response"""
+class SalesSentimentAnalysisResponse(BaseModel):
+    """Sales sentiment analysis response"""
     overall_sentiment: str
     sentiment_score: float = Field(..., ge=-1.0, le=1.0)
     confidence: float = Field(..., ge=0.0, le=1.0)
@@ -271,13 +271,23 @@ def get_services(request: Request):
     """Get services from application state"""
     return request.app.state.services
 
-def get_sentiment_analyzer(services: dict = Depends(get_services)):
-    """Get sentiment analyzer service"""
-    analyzer = services.get('sentiment_analyzer')
+def get_sales_sentiment_analyzer(services: dict = Depends(get_services)):
+    """Get sales sentiment analyzer service"""
+    analyzer = services.get('sales_sentiment_analyzer')
     if not analyzer:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Sentiment analyzer service not available"
+            detail="Sales sentiment analyzer service not available"
+        )
+    return analyzer
+
+def get_client_sentiment_analyzer(services: dict = Depends(get_services)):
+    """Get client sentiment analyzer service"""
+    analyzer = services.get('client_sentiment_analyzer')
+    if not analyzer:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Client sentiment analyzer service not available"
         )
     return analyzer
 
@@ -327,10 +337,10 @@ def get_request_id(request: Request) -> str:
 
 # =================== API ENDPOINTS ===================
 
-@router.post("/analyze/sentiment", response_model=SentimentAnalysisResponse, tags=["Analysis"])
-async def analyze_sentiment(
+@router.post("/analyze/sales-sentiment", response_model=SalesSentimentAnalysisResponse, tags=["Sales Analysis"])
+async def analyze_sales_sentiment(
     request: Request,
-    sentiment_analyzer = Depends(get_sentiment_analyzer),
+    sales_sentiment_analyzer = Depends(get_sales_sentiment_analyzer),
     analysis_request: AnalysisRequest = Body(
         ...,
         example={
@@ -339,51 +349,23 @@ async def analyze_sentiment(
                 "activities": [
                     {
                         "sent_at": "2023-11-21T14:39:17.123Z",
-                        "from": "client@company.com",
-                        "to": ["sales@ourcompany.com"],
-                        "subject": "RE: Proposal Discussion",
-                        "body": "Thanks for the proposal. We have some questions about pricing.",
+                        "from": "sales@ourcompany.com",
+                        "to": ["client@company.com"],
+                        "subject": "Follow-up on Proposal Discussion",
+                        "body": "Thank you for your time yesterday. I've attached the revised proposal based on your feedback.",
                         "state": "email",
-                        "direction": "incoming",
+                        "direction": "outgoing",
                         "activity_type": "email"
                     },
                     {
                         "id": "call_123",
                         "createdate": "2023-11-22T10:30:00.000Z",
-                        "call_title": "Follow-up call with client",
-                        "call_body": "Discussed pricing concerns and provided clarification",
+                        "call_title": "Strategic follow-up call with client",
+                        "call_body": "Discussed implementation timeline and next steps. Client expressed strong interest.",
                         "call_direction": "OUTBOUND",
                         "call_duration": "30",
                         "call_status": "COMPLETED",
                         "activity_type": "call"
-                    },
-                    {
-                        "id": "meeting_123",
-                        "internal_meeting_notes": "Reviewed client feedback and prepared response",
-                        "meeting_title": "Client Strategy Meeting",
-                        "meeting_location": "Conference Room A",
-                        "meeting_location_type": "OFFICE",
-                        "meeting_outcome": "COMPLETED",
-                        "meeting_start_time": "2023-11-23T15:00:00.000Z",
-                        "meeting_end_time": "2023-11-23T16:00:00.000Z",
-                        "activity_type": "meeting"
-                    },
-                    {
-                        "id": "note_123",
-                        "createdate": "2023-11-24T09:00:00.000Z",
-                        "lastmodifieddate": "2023-11-24T09:15:00.000Z",
-                        "note_body": "Client requested additional references",
-                        "activity_type": "note"
-                    },
-                    {
-                        "id": "task_123",
-                        "createdate": "2023-11-25T08:00:00.000Z",
-                        "task_priority": "HIGH",
-                        "task_status": "COMPLETED",
-                        "task_type": "EMAIL",
-                        "task_subject": "Send references to client",
-                        "task_body": "Compile and send 3 relevant client references",
-                        "activity_type": "task"
                     }
                 ],
                 "amount": "50000",
@@ -402,7 +384,7 @@ async def analyze_sentiment(
     )
 ):
     """
-    Analyze sentiment for a single deal
+    Analyze sales sentiment for a single deal
     
     This endpoint analyzes salesperson sentiment from deal activities using:
     - RAG retrieval of relevant historical examples
@@ -420,13 +402,13 @@ async def analyze_sentiment(
     
     try:
         request_id = get_request_id(request)
-        logger.info(f"[{request_id}] Analyzing sentiment for deal {analysis_request.deal_data.deal_id}")
+        logger.info(f"[{request_id}] Analyzing sales sentiment for deal {analysis_request.deal_data.deal_id}")
         
         # Convert Pydantic model to dict format expected by analyzer
         deal_dict = analysis_request.deal_data.dict()
         
         # Perform sentiment analysis
-        result = sentiment_analyzer.analyze_deal_sentiment(
+        result = sales_sentiment_analyzer.analyze_deal_sentiment(
             deal_data=deal_dict,
             include_rag_context=analysis_request.include_rag_context
         )
@@ -438,108 +420,19 @@ async def analyze_sentiment(
                 detail=f"Analysis failed: {result['error']}"
             )
         
-        logger.info(f"[{request_id}] Sentiment analysis completed for deal {analysis_request.deal_data.deal_id}")
+        logger.info(f"[{request_id}] Sales sentiment analysis completed for deal {analysis_request.deal_data.deal_id}")
         return result
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in sentiment analysis: {e}")
+        logger.error(f"Error in sales sentiment analysis: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Analysis failed: {str(e)}"
         )
 
-@router.post("/analyze/batch", response_model=BatchAnalysisResponse, tags=["Analysis"])
-async def analyze_batch_sentiment(
-    request: Request,
-    background_tasks: BackgroundTasks,
-    sentiment_analyzer = Depends(get_sentiment_analyzer),
-    batch_request: BatchAnalysisRequest = Body(
-        ...,
-        example={
-            "deals": [
-                {
-                    "deal_id": "deal_001",
-                    "activities": [
-                        {
-                            "activity_type": "email",
-                            "subject": "Follow-up on proposal",
-                            "body": "Thanks for the meeting. I'll send the revised proposal.",
-                            "direction": "outgoing"
-                        }
-                    ],
-                    "amount": "50000",
-                    "dealstage": "Proposal",
-                    "dealtype": "newbusiness"
-                },
-                {
-                    "deal_id": "deal_002",
-                    "activities": [
-                        {
-                            "activity_type": "call",
-                            "call_title": "Discovery call",
-                            "call_body": "Discussed requirements and next steps"
-                        }
-                    ],
-                    "amount": "75000",
-                    "dealstage": "Discovery",
-                    "dealtype": "newbusiness"
-                }
-            ],
-            "include_rag_context": True,
-            "batch_size": 10
-        }
-    )
-):
-    """
-    Analyze sentiment for multiple deals in batch
-    
-    Processes multiple deals efficiently with:
-    - Batch processing for performance
-    - Individual error handling
-    - Progress tracking
-    - Detailed batch statistics
-    """
-    
-    try:
-        request_id = get_request_id(request)
-        logger.info(f"[{request_id}] Starting batch analysis for {len(batch_request.deals)} deals")
-        
-        # Convert Pydantic models to dict format
-        deals_dict = [deal.dict() for deal in batch_request.deals]
-        
-        # Perform batch analysis
-        result = sentiment_analyzer.analyze_batch_sentiment(
-            deals_data=deals_dict,
-            include_rag_context=batch_request.include_rag_context
-        )
-        
-        logger.info(f"[{request_id}] Batch analysis completed: {result.get('successful_analyses', 0)} successful")
-        return result
-        
-    except Exception as e:
-        logger.error(f"Error in batch analysis: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Batch analysis failed: {str(e)}"
-        )
-    
-# Add these routes to your existing api/routes.py file
-
-def get_client_sentiment_analyzer(services: dict = Depends(get_services)):
-    """Get client sentiment analyzer service"""
-    analyzer = services.get('client_sentiment_analyzer')
-    if not analyzer:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Client sentiment analyzer service not available"
-        )
-    return analyzer
-
-# Add client sentiment analysis endpoints
-
-@router.post("/analyze/client-sentiment", response_model=SentimentAnalysisResponse, tags=["Client Analysis"])
+@router.post("/analyze/client-sentiment", response_model=ClientSentimentAnalysisResponse, tags=["Client Analysis"])
 async def analyze_client_sentiment(
     request: Request,
     client_sentiment_analyzer = Depends(get_client_sentiment_analyzer),
@@ -635,6 +528,70 @@ async def analyze_client_sentiment(
             detail=f"Client analysis failed: {str(e)}"
         )
 
+@router.post("/analyze/sales-batch", response_model=BatchAnalysisResponse, tags=["Sales Analysis"])
+async def analyze_batch_sales_sentiment(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    sales_sentiment_analyzer = Depends(get_sales_sentiment_analyzer),
+    batch_request: BatchAnalysisRequest = Body(
+        ...,
+        example={
+            "deals": [
+                {
+                    "deal_id": "deal_001",
+                    "activities": [
+                        {
+                            "activity_type": "email",
+                            "subject": "Follow-up on proposal",
+                            "body": "Thanks for the meeting. I'll send the revised proposal.",
+                            "direction": "outgoing"
+                        }
+                    ],
+                    "amount": "50000",
+                    "dealstage": "Proposal",
+                    "dealtype": "newbusiness",
+                    "createdate": "2023-11-01T08:00:00.000Z"
+                }
+            ],
+            "include_rag_context": True,
+            "batch_size": 10,
+            "analysis_type": "sales_sentiment"
+        }
+    )
+):
+    """
+    Analyze sales sentiment for multiple deals in batch
+    
+    Processes multiple deals efficiently with:
+    - Batch processing for performance
+    - Individual error handling
+    - Progress tracking
+    - Detailed batch statistics
+    """
+    
+    try:
+        request_id = get_request_id(request)
+        logger.info(f"[{request_id}] Starting batch sales analysis for {len(batch_request.deals)} deals")
+        
+        # Convert Pydantic models to dict format
+        deals_dict = [deal.dict() for deal in batch_request.deals]
+        
+        # Perform batch analysis
+        result = sales_sentiment_analyzer.analyze_batch_sentiment(
+            deals_data=deals_dict,
+            include_rag_context=batch_request.include_rag_context
+        )
+        
+        logger.info(f"[{request_id}] Batch sales analysis completed: {result.get('successful_analyses', 0)} successful")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in batch sales analysis: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Batch sales analysis failed: {str(e)}"
+        )
+
 @router.post("/analyze/client-batch", response_model=BatchAnalysisResponse, tags=["Client Analysis"])
 async def analyze_batch_client_sentiment(
     request: Request,
@@ -656,20 +613,8 @@ async def analyze_batch_client_sentiment(
                     ],
                     "amount": "50000",
                     "dealstage": "Proposal",
-                    "dealtype": "newbusiness"
-                },
-                {
-                    "deal_id": "deal_002",
-                    "activities": [
-                        {
-                            "activity_type": "meeting",
-                            "meeting_title": "Product Demo",
-                            "internal_meeting_notes": "Client was very engaged and asked lots of technical questions"
-                        }
-                    ],
-                    "amount": "75000",
-                    "dealstage": "Demo",
-                    "dealtype": "newbusiness"
+                    "dealtype": "newbusiness",
+                    "createdate": "2023-11-01T08:00:00.000Z"
                 }
             ],
             "include_rag_context": True,
@@ -966,10 +911,15 @@ async def get_system_stats(
             'services': {}
         }
         
-        # Get sentiment analyzer stats
-        sentiment_analyzer = services.get('sentiment_analyzer')
-        if sentiment_analyzer:
-            stats['services']['sentiment_analyzer'] = sentiment_analyzer.get_analyzer_stats()
+        # Get sales sentiment analyzer stats
+        sales_sentiment_analyzer = services.get('sales_sentiment_analyzer')
+        if sales_sentiment_analyzer:
+            stats['services']['sales_sentiment_analyzer'] = sales_sentiment_analyzer.get_analyzer_stats()
+        
+        # Get client sentiment analyzer stats
+        client_sentiment_analyzer = services.get('client_sentiment_analyzer')
+        if client_sentiment_analyzer:
+            stats['services']['client_sentiment_analyzer'] = client_sentiment_analyzer.get_analyzer_stats()
         
         # Get RAG retriever stats
         rag_retriever = services.get('rag_retriever')

@@ -158,7 +158,7 @@ class AzureOpenAIProvider(LLMProvider):
         """Safely extract content from Azure OpenAI response with proper error handling"""
         try:
             # Log the response structure for debugging
-            logger.info(f"Response structure keys: {list(response_dict.keys())}")
+            # logger.info(f"Response structure keys: {list(response_dict.keys())}")
             
             # Check if 'output' exists
             if 'output' not in response_dict:
@@ -225,7 +225,7 @@ class AzureOpenAIProvider(LLMProvider):
             raise ValueError("Empty or whitespace-only response")
         
         # Log the raw content for debugging
-        logger.info(f"Raw Azure response : {raw_content}\n{type(raw_content)}")
+        # logger.info(f"Raw Azure response : {raw_content}\n{type(raw_content)}")
         
         # Step 1: Basic cleanup - remove leading/trailing whitespace
         content = raw_content.strip()
@@ -347,7 +347,7 @@ CRITICAL: Your response must be valid JSON only. Do not include any explanatory 
 class PromptManager:
     """Manages prompt templates for sentiment analysis"""
     
-    def __init__(self, prompt_file_path: str = "prompts/sentiment_analysis_prompt.txt"):
+    def __init__(self, prompt_file_path: str = ""):
         self.prompt_file_path = prompt_file_path
         self.template = self._load_prompt_template()
     
@@ -415,9 +415,10 @@ class LLMClient:
     def __init__(
         self, 
         provider: LLMProvider,
-        prompt_file_path: str = "prompts/prompt_version_3.txt",
+        prompt_file_path: str = "",
         max_retries: int = 3,
-        retry_delay: float = 1.0
+        retry_delay: float = 1.0,
+        analysis_type: str = "sales"
     ):
         """
         Initialize LLM client
@@ -427,13 +428,15 @@ class LLMClient:
             prompt_file_path: Path to prompt template file
             max_retries: Maximum number of retry attempts
             retry_delay: Delay between retries in seconds
+            analysis_type: Type of analysis (sales or client)
         """
         self.provider = provider
         self.prompt_manager = PromptManager(prompt_file_path)
         self.max_retries = max_retries
         self.retry_delay = retry_delay
+        self.analysis_type = analysis_type
         
-        logger.info(f"Initialized LLM client with provider: {provider.get_provider_name()}")
+        logger.info(f"Initialized LLM client with provider: {provider.get_provider_name()}, analysis type: {analysis_type}")
     
     def analyze_sentiment(
         self,
@@ -445,7 +448,7 @@ class LLMClient:
         **kwargs
     ) -> Dict[str, Any]:
         """
-        Analyze salesperson sentiment using RAG context and activities
+        Analyze sentiment using RAG context and activities
         
         Args:
             deal_id: Unique deal identifier
@@ -481,10 +484,11 @@ class LLMClient:
             'timestamp': datetime.utcnow().isoformat(),
             'deal_id': deal_id,
             'rag_context_length': len(rag_context),
-            'activities_length': len(activities_text)
+            'activities_length': len(activities_text),
+            'analysis_type': self.analysis_type
         }
         
-        logger.info(f"Completed sentiment analysis for deal {deal_id}")
+        logger.info(f"Completed {self.analysis_type} sentiment analysis for deal {deal_id}")
         return result
     
     def _generate_with_retries(self, prompt: str) -> str:
@@ -520,7 +524,7 @@ class LLMClient:
             # Parse JSON
             result = json.loads(cleaned_response)
             
-            # Validate required fields
+            # Validate required fields based on analysis type
             self._validate_response_structure(result)
             
             return result
@@ -550,7 +554,7 @@ class LLMClient:
         return response_text.strip()
     
     def _validate_response_structure(self, result: Dict[str, Any]) -> None:
-        """Validate that response has required structure for both sales and client sentiment analysis"""
+        """Validate that response has required structure based on analysis type"""
         
         # Core required fields that both analyses must have
         core_required_fields = [
@@ -561,56 +565,10 @@ class LLMClient:
             'reasoning'
         ]
         
-        # Sales-specific required fields
-        sales_specific_fields = [
-            'deal_momentum_indicators',
-            'professional_gaps',
-            'excellence_indicators',
-            'risk_indicators',
-            'opportunity_indicators',
-            'temporal_trend',
-            'recommended_actions'
-        ]
-        
-        # Client-specific required fields
-        client_specific_fields = [
-            'client_engagement_indicators',
-            'buying_signals',
-            'concern_indicators',
-            'engagement_opportunities',
-            'decision_timeline',
-            'recommended_actions',
-            'client_risk_level'
-        ]
-        
         # Check core required fields
         for field in core_required_fields:
             if field not in result:
                 raise ValueError(f"Missing required field: {field}")
-        
-        # Determine analysis type based on present fields
-        has_sales_fields = any(field in result for field in sales_specific_fields)
-        has_client_fields = any(field in result for field in client_specific_fields)
-        
-        # Validate based on analysis type
-        if has_client_fields and not has_sales_fields:
-            # This is a client sentiment analysis
-            logger.debug("Validating client sentiment analysis response")
-            for field in ['client_engagement_indicators', 'buying_signals', 'decision_timeline']:
-                if field not in result:
-                    logger.warning(f"Missing client-specific field: {field}")
-                    # Don't raise error, just log warning for optional fields
-        
-        elif has_sales_fields and not has_client_fields:
-            # This is a sales sentiment analysis
-            logger.debug("Validating sales sentiment analysis response")
-            for field in ['deal_momentum_indicators']:
-                if field not in result:
-                    raise ValueError(f"Missing required sales-specific field: {field}")
-        
-        else:
-            # Neither type detected - could be either with minimal fields
-            logger.warning("Cannot determine analysis type from response fields. Proceeding with core validation only.")
         
         # Validate sentiment score range
         score = result.get('sentiment_score')
@@ -621,13 +579,37 @@ class LLMClient:
         confidence = result.get('confidence')
         if not isinstance(confidence, (int, float)) or not (0.0 <= confidence <= 1.0):
             raise ValueError(f"Invalid confidence: {confidence}. Must be between 0.0 and 1.0")
+        
+        # Type-specific validation
+        if self.analysis_type == "sales":
+            # Sales-specific required fields
+            sales_required_fields = ['deal_momentum_indicators']
+            for field in sales_required_fields:
+                if field not in result:
+                    raise ValueError(f"Missing required sales-specific field: {field}")
+        
+        elif self.analysis_type == "client":
+            # Client-specific required fields
+            client_required_fields = ['client_engagement_indicators']
+            for field in client_required_fields:
+                if field not in result:
+                    logger.warning(f"Missing client-specific field: {field} (optional)")
+        
+        logger.debug(f"Response validation passed for {self.analysis_type} analysis")
 
-def create_llm_client(provider_name: str, **provider_kwargs) -> LLMClient:
+def create_llm_client(
+    provider_name: str, 
+    prompt_file_path: str = "",
+    analysis_type: str = "sales",
+    **provider_kwargs
+) -> LLMClient:
     """
     Factory function to create LLM client with specified provider
     
     Args:
         provider_name: Name of provider ('openai', 'anthropic', 'groq', 'azure')
+        prompt_file_path: Path to prompt template file
+        analysis_type: Type of analysis (sales or client)
         **provider_kwargs: Provider-specific configuration
         
     Returns:
@@ -647,4 +629,8 @@ def create_llm_client(provider_name: str, **provider_kwargs) -> LLMClient:
     else:
         raise ValueError(f"Unknown provider: {provider_name}")
     
-    return LLMClient(provider)
+    return LLMClient(
+        provider=provider,
+        prompt_file_path=prompt_file_path,
+        analysis_type=analysis_type
+    )

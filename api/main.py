@@ -100,10 +100,10 @@ async def initialize_services():
             data_processor=service_registry['data_processor']
         )
 
-        # Initialize sentiment analyzer (sales)
+        # Initialize sales sentiment analyzer
         logger.info("Initializing sales sentiment analyzer...")
-        from llm.sentiment_analyzer import create_sentiment_analyzer
-        service_registry['sentiment_analyzer'] = create_sentiment_analyzer(
+        from llm.sales_sentiment_analyzer import create_sales_sentiment_analyzer
+        service_registry['sales_sentiment_analyzer'] = create_sales_sentiment_analyzer(
             llm_provider=settings.LLM_PROVIDER,
             llm_config=settings.get_llm_config()
         )
@@ -182,14 +182,14 @@ async def perform_health_checks():
         except Exception as e:
             health_results['vector_store'] = {'status': 'unhealthy', 'error': str(e)}
     
-    # Check sentiment analyzer (sales)
-    sentiment_analyzer = service_registry.get('sentiment_analyzer')
-    if sentiment_analyzer:
+    # Check sales sentiment analyzer
+    sales_sentiment_analyzer = service_registry.get('sales_sentiment_analyzer')
+    if sales_sentiment_analyzer:
         try:
-            stats = sentiment_analyzer.get_analyzer_stats()
-            health_results['sentiment_analyzer'] = {'status': 'healthy', 'stats': stats}
+            stats = sales_sentiment_analyzer.get_analyzer_stats()
+            health_results['sales_sentiment_analyzer'] = {'status': 'healthy', 'stats': stats}
         except Exception as e:
-            health_results['sentiment_analyzer'] = {'status': 'unhealthy', 'error': str(e)}
+            health_results['sales_sentiment_analyzer'] = {'status': 'unhealthy', 'error': str(e)}
     
     # Check client sentiment analyzer
     client_sentiment_analyzer = service_registry.get('client_sentiment_analyzer')
@@ -214,14 +214,15 @@ app = FastAPI(
     description="""
     Advanced Sales Sentiment Analysis API with Retrieval-Augmented Generation (RAG) capabilities.
     
-    This API analyzes salesperson performance and sentiment from CRM activities using:
+    This API analyzes both salesperson performance and client engagement from CRM activities using:
     - Historical deal pattern matching through RAG
-    - LLM-powered sentiment analysis
+    - LLM-powered sentiment analysis for sales and client perspectives
     - Modular context engineering
     - Multiple LLM provider support
     
     ## Features
-    - **Sentiment Analysis**: Analyze salesperson sentiment from deal activities
+    - **Sales Sentiment Analysis**: Analyze salesperson sentiment from deal activities
+    - **Client Sentiment Analysis**: Analyze client engagement and buying intent
     - **RAG Context**: Retrieve relevant examples from past deals for better analysis
     - **Knowledge Base Management**: Build and manage historical deal patterns
     - **Multi-Provider Support**: Azure OpenAI, OpenAI, Anthropic, Groq
@@ -330,17 +331,17 @@ async def health_check():
                     "error": str(e)
                 }
         
-        # Check sentiment analyzer (sales)
-        sentiment_analyzer = service_registry.get('sentiment_analyzer')
-        if sentiment_analyzer:
+        # Check sales sentiment analyzer
+        sales_sentiment_analyzer = service_registry.get('sales_sentiment_analyzer')
+        if sales_sentiment_analyzer:
             try:
-                stats = sentiment_analyzer.get_analyzer_stats()
-                health_results["services"]["sentiment_analyzer"] = {
+                stats = sales_sentiment_analyzer.get_analyzer_stats()
+                health_results["services"]["sales_sentiment_analyzer"] = {
                     "status": "healthy",
                     "stats": stats
                 }
             except Exception as e:
-                health_results["services"]["sentiment_analyzer"] = {
+                health_results["services"]["sales_sentiment_analyzer"] = {
                     "status": "unhealthy",
                     "error": str(e)
                 }

@@ -117,7 +117,7 @@ class DealCharacteristics(BaseModel):
     deal_size_category: str
     probability_category: str
     create_date: str
-    close_date: str
+    close_date: Optional[str] = None
     deal_age_days: int
     is_closed: bool
     is_won: bool
