@@ -219,7 +219,7 @@ Keep each section concise and actionable.
         try:
             # Use the LLM client's provider to generate response
             # Adjust parameters for context generation (more focused, less creative)
-            logger.info(f"Context prompt: {prompt}")
+            # logger.info(f"Context prompt: {prompt}")
             
             response = llm_client.provider.generate_response(
                 prompt=prompt,

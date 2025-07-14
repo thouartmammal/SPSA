@@ -108,22 +108,22 @@ class DealData(BaseModel):
             if not activity_type:
                 raise ValueError(f"Activity {i} missing 'activity_type' field")
             
-            # Validate activity type specific fields
+            # Validate activity type specific fields - check for key presence, not value
             if activity_type == 'email':
-                if not any([activity.get('subject'), activity.get('body')]):
-                    raise ValueError(f"Email activity {i} must have either 'subject' or 'body'")
+                if not any(['subject' in activity, 'body' in activity]):
+                    raise ValueError(f"Email activity {i} must have either 'subject' or 'body' key")
             elif activity_type == 'call':
-                if not any([activity.get('call_title'), activity.get('call_body')]):
-                    raise ValueError(f"Call activity {i} must have either 'call_title' or 'call_body'")
+                if not any(['call_title' in activity, 'call_body' in activity]):
+                    raise ValueError(f"Call activity {i} must have either 'call_title' or 'call_body' key")
             elif activity_type == 'meeting':
-                if not any([activity.get('meeting_title'), activity.get('internal_meeting_notes')]):
-                    raise ValueError(f"Meeting activity {i} must have either 'meeting_title' or 'internal_meeting_notes'")
+                if not any(['meeting_title' in activity, 'internal_meeting_notes' in activity]):
+                    raise ValueError(f"Meeting activity {i} must have either 'meeting_title' or 'internal_meeting_notes' key")
             elif activity_type == 'note':
-                if not activity.get('note_body'):
-                    raise ValueError(f"Note activity {i} must have 'note_body'")
+                if 'note_body' not in activity:
+                    raise ValueError(f"Note activity {i} must have 'note_body' key")
             elif activity_type == 'task':
-                if not any([activity.get('task_subject'), activity.get('task_body')]):
-                    raise ValueError(f"Task activity {i} must have either 'task_subject' or 'task_body'")
+                if not any(['task_subject' in activity, 'task_body' in activity]):
+                    raise ValueError(f"Task activity {i} must have either 'task_subject' or 'task_body' key")
         
         return v
     
