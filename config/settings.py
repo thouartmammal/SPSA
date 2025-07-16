@@ -152,10 +152,6 @@ class Settings:
             if not all([self.PINECONE_API_KEY, self.PINECONE_ENVIRONMENT]):
                 errors.append("Pinecone configuration incomplete")
         
-        # Validate data path
-        if not Path(self.DATA_PATH).exists():
-            errors.append(f"Data file not found: {self.DATA_PATH}")
-        
         # Validate authentication
         if self.REQUIRE_AUTH and not self.API_KEY:
             errors.append("API key required when authentication is enabled")
