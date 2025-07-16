@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from .routes import router
-from middleware import (
+from .middleware import (
     RequestLoggingMiddleware,
     ErrorHandlingMiddleware,
     RateLimitMiddleware,
