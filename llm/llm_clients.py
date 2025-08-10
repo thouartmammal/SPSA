@@ -10,7 +10,7 @@ from pathlib import Path
 import openai
 import anthropic
 from groq import Groq
-
+from models.schemas import parse_activity_safely
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -522,12 +522,15 @@ class LLMClient:
             cleaned_response = self._clean_response_text(response_text)
             
             # Parse JSON
-            result = json.loads(cleaned_response)
+            raw_result = json.loads(cleaned_response)
             
             # Validate required fields based on analysis type
-            self._validate_response_structure(result)
+            validated_model = parse_activity_safely(raw_result)
             
-            return result
+            if validated_model is None:
+                raise ValueError(f"Failed to parse response for deal {deal_id}. Invalid analysis type or structure.")
+            
+            return validated_model.dict()
             
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON response for deal {deal_id}: {e}")
