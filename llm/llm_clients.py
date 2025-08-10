@@ -10,7 +10,7 @@ from pathlib import Path
 import openai
 import anthropic
 from groq import Groq
-from models.schemas import parse_activity_safely
+from models.validators import parse_activity_safely
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
