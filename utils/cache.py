@@ -225,7 +225,7 @@ class CacheManager:
         cache_key = self._generate_embedding_key(text, model_name)
         return self.get(cache_key, cache_type="embedding")
     
-    def cache_llm_response(self, prompt: str, response: str, model_name: str) -> bool:
+    def cache_llm_response(self, model_name: str, deal_id: str, prompt_text: str, response: str, rag_context_included: bool, analysis_type: str, cache_version: int = 1) -> bool:
         """
         Cache LLM response
         
@@ -238,10 +238,10 @@ class CacheManager:
             True if successful
         """
         
-        cache_key = self._generate_llm_key(prompt, model_name)
+        cache_key = self._generate_llm_key(model_name, deal_id, prompt_text, rag_context_included, analysis_type, cache_version)
         return self.set(cache_key, response, ttl=settings.LLM_CACHE_TTL, cache_type="llm")
     
-    def get_cached_llm_response(self, prompt: str, model_name: str) -> Optional[str]:
+    def get_cached_llm_response(self, model_name: str, deal_id: str, prompt_text: str, rag_context_included: bool, analysis_type: str, cache_version: int = 1) -> Optional[str]:
         """
         Get cached LLM response
         
@@ -253,7 +253,7 @@ class CacheManager:
             Cached response or None
         """
         
-        cache_key = self._generate_llm_key(prompt, model_name)
+        cache_key = self._generate_llm_key(model_name, deal_id, prompt_text, rag_context_included, analysis_type, cache_version)
         return self.get(cache_key, cache_type="llm")
     
     def _generate_embedding_key(self, text: str, model_name: str) -> str:
@@ -261,10 +261,18 @@ class CacheManager:
         text_hash = hashlib.md5(text.encode('utf-8')).hexdigest()
         return f"{model_name}_{text_hash}"
     
-    def _generate_llm_key(self, prompt: str, model_name: str) -> str:
+    def _generate_llm_key(self, model_name: str, deal_id: str, prompt_text: str, rag_context_included: bool, analysis_type: str, cache_version: int = 1) -> str:
         """Generate cache key for LLM responses"""
-        prompt_hash = hashlib.md5(prompt.encode('utf-8')).hexdigest()
-        return f"{model_name}_{prompt_hash}"
+        key_dict = {
+            "model_name": model_name,
+            "deal_id": deal_id,
+            "prompt_hash": hashlib.md5(prompt_text.encode('utf-8')).hexdigest(),
+            "rag_context_included": rag_context_included,
+            "analysis_type": analysis_type,
+            "cache_version": cache_version
+        }
+        key_json = json.dumps(key_dict, sort_keys=True)
+        return hashlib.md5(key_json.encode('utf-8')).hexdigest()
     
     def health_check(self) -> Dict[str, Any]:
         """
